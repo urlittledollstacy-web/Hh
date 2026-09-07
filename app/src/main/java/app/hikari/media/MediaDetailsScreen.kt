@@ -42,7 +42,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.compose.ui.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import app.hikari.core.model.MediaDetail
@@ -131,22 +131,21 @@ private fun DetailError(message: String, onBack: () -> Unit, onRetry: () -> Unit
 private fun DetailContent(media: MediaDetail, onBack: () -> Unit, onOpenRelation: (MediaSummary) -> Unit) {
     LazyColumn(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background), contentPadding = PaddingValues(bottom = 32.dp)) {
         item {
-            // Use a stable wide banner frame and crop without ever scaling the X/Y axes independently.
-            Box(Modifier.fillMaxWidth().aspectRatio(3f).background(MaterialTheme.colorScheme.surfaceVariant)) {
-                media.bannerUrl?.let { AsyncImage(model = it, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
-                IconButton(onClick = onBack, modifier = Modifier.padding(12.dp).align(Alignment.TopStart).background(MaterialTheme.colorScheme.surface.copy(alpha = .85f), RoundedCornerShape(50))) { Icon(Icons.Outlined.ArrowBack, "Back") }
-            }
-        }
-        item {
-            Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(top = 12.dp), verticalAlignment = Alignment.Bottom) {
-                Box(Modifier.width(126.dp).aspectRatio(.7f).clip(RoundedCornerShape(16.dp)).background(MaterialTheme.colorScheme.surfaceVariant)) {
-                    media.summary.coverUrl?.let { AsyncImage(model = it, contentDescription = media.summary.title, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
+            Column(Modifier.fillMaxWidth()) {
+                Box(Modifier.fillMaxWidth().aspectRatio(3f).background(MaterialTheme.colorScheme.surfaceVariant)) {
+                    media.bannerUrl?.let { AsyncImage(model = it, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
+                    IconButton(onClick = onBack, modifier = Modifier.padding(12.dp).align(Alignment.TopStart).background(MaterialTheme.colorScheme.surface.copy(alpha = .85f), RoundedCornerShape(50))) { Icon(Icons.Outlined.ArrowBack, "Back") }
                 }
-                Spacer(Modifier.width(16.dp))
-                Column(Modifier.weight(1f).padding(bottom = 6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text(media.summary.title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, maxLines = 4, overflow = TextOverflow.Ellipsis)
-                    Text(if (media.summary.type.name == "ANIME") "Anime" else "Manga", color = MaterialTheme.colorScheme.primary)
-                    media.summary.averageScore?.let { Text("★ $it%", fontWeight = FontWeight.SemiBold) }
+                Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp), verticalAlignment = Alignment.Bottom) {
+                    Box(Modifier.width(126.dp).aspectRatio(.7f).clip(RoundedCornerShape(16.dp)).background(MaterialTheme.colorScheme.surfaceVariant).offset(y = (-60).dp)) {
+                        media.summary.coverUrl?.let { AsyncImage(model = it, contentDescription = media.summary.title, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
+                    }
+                    Spacer(Modifier.width(16.dp))
+                    Column(Modifier.weight(1f).padding(top = 12.dp, bottom = 6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(media.summary.title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, maxLines = 4, overflow = TextOverflow.Ellipsis)
+                        Text(if (media.summary.type.name == "ANIME") "Anime" else "Manga", color = MaterialTheme.colorScheme.primary)
+                        media.summary.averageScore?.let { Text("★ $it%", fontWeight = FontWeight.SemiBold) }
+                    }
                 }
             }
         }
