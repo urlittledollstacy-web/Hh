@@ -2,6 +2,14 @@ package app.hikari.core.model
 
 enum class MediaType { ANIME, MANGA }
 
+enum class ScoreFormat {
+    POINT_100,
+    POINT_10_DECIMAL,
+    POINT_10,
+    POINT_5,
+    POINT_3,
+}
+
 data class MediaSummary(
     val id: Int,
     val type: MediaType,
