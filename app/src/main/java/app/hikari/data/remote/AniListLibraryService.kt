@@ -69,17 +69,22 @@ class AniListLibraryService @Inject constructor(
     }
 
     suspend fun updateEntry(entry: LibraryEntry, status: String, progress: Int, score: Double) = withContext(Dispatchers.IO) {
-        val mutation = "mutation(\$id:Int,\$mediaId:Int,\$status:MediaListStatus,\$score:Float,\$progress:Int){SaveMediaListEntry(id:\$id,mediaId:\$mediaId,status:\$status,score:\$score,progress:\$progress){id status progress score}}"
-        execute(
-            mutation,
-            mapOf(
-                "id" to entry.id.takeIf { it > 0 },
-                "mediaId" to entry.media.id,
-                "status" to status,
-                "score" to score,
-                "progress" to progress,
-            ),
-        )
+        // AniList's documented create flow omits id entirely. Do the same for new entries
+        // instead of sending an explicit null, while still sending id for real updates.
+        val hasExistingEntry = entry.id > 0
+        val mutation = if (hasExistingEntry) {
+            "mutation(\$id:Int,\$mediaId:Int,\$status:MediaListStatus,\$score:Float,\$progress:Int){SaveMediaListEntry(id:\$id,mediaId:\$mediaId,status:\$status,score:\$score,progress:\$progress){id status progress score}}"
+        } else {
+            "mutation(\$mediaId:Int,\$status:MediaListStatus,\$score:Float,\$progress:Int){SaveMediaListEntry(mediaId:\$mediaId,status:\$status,score:\$score,progress:\$progress){id status progress score}}"
+        }
+        val variables = buildMap<String, Any?> {
+            if (hasExistingEntry) put("id", entry.id)
+            put("mediaId", entry.media.id)
+            put("status", status)
+            put("score", score)
+            put("progress", progress)
+        }
+        execute(mutation, variables)
     }
 
     private fun parseScoreFormat(value: String): ScoreFormat = when (value) {
