@@ -77,6 +77,7 @@ import app.hikari.core.auth.SecureTokenStore
 import app.hikari.core.model.MediaSummary
 import app.hikari.core.model.MediaType
 import app.hikari.data.remote.AniListGraphQlService
+import app.hikari.library.LibraryScreen
 import app.hikari.profile.ProfileDetails
 import coil3.compose.AsyncImage
 import dagger.hilt.android.AndroidEntryPoint
@@ -184,7 +185,7 @@ private fun AppContent(destination: Destination, theme: AppTheme, navStyle: Navi
     when (destination) {
         Destination.Home -> HomeScreen(padding, onSearch = { onDestination(Destination.Discover) })
         Destination.Discover -> DiscoverScreen(padding)
-        Destination.Library -> PlaceholderScreen("Your library", "ANILIST SYNC", "Sign in to keep your watching and reading progress organized across AniList.", "Sign in with AniList", padding)
+        Destination.Library -> LibraryScreen(signedIn, padding)
         Destination.Calendar -> PlaceholderScreen("Airing calendar", "THIS WEEK", "See upcoming episodes at a glance.", "View today's airing", padding)
         Destination.Profile -> ProfileScreen(theme, navStyle, signedIn, onSignIn, onSignOut, onTheme, onNavStyle, padding)
     }
