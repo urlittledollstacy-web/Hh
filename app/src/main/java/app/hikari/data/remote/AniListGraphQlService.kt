@@ -37,9 +37,7 @@ class AniListGraphQlService @Inject constructor(
             val titleObject = media.getJSONObject("title")
             val title = titleObject.optString("english").ifBlank { titleObject.optString("romaji") }
             MediaSummary(
-                id = media.getInt("id"),
-                type = MediaType.ANIME,
-                title = title,
+                id = media.getInt("id"), type = MediaType.ANIME, title = title,
                 coverUrl = media.optJSONObject("coverImage")?.optString("large"),
                 averageScore = media.optInt("averageScore").takeIf { it != 0 },
                 episodesOrChapters = media.optInt("episodes").takeIf { it != 0 },
@@ -55,27 +53,21 @@ class AniListGraphQlService @Inject constructor(
     }.getOrDefault(emptyList())
 
     suspend fun viewerProfile(): AniListProfile = execute(
-        "query{Viewer{id name avatar{large} banner about statistics{anime{count episodesWatched minutesWatched meanScore} manga{count chaptersRead volumesRead minutesRead meanScore}}}}",
+        "query{Viewer{id name avatar{large} banner about statistics{anime{count episodesWatched minutesWatched meanScore} manga{count chaptersRead volumesRead meanScore}}}}",
         emptyMap(),
     ).getJSONObject("data").getJSONObject("Viewer").let { viewer ->
         val statistics = viewer.optJSONObject("statistics") ?: JSONObject()
         val anime = statistics.optJSONObject("anime") ?: JSONObject()
         val manga = statistics.optJSONObject("manga") ?: JSONObject()
         AniListProfile(
-            id = viewer.getInt("id"),
-            name = viewer.getString("name"),
+            id = viewer.getInt("id"), name = viewer.getString("name"),
             avatarUrl = viewer.optJSONObject("avatar")?.optString("large"),
             bannerUrl = viewer.optString("banner").takeIf { it.isNotBlank() },
             about = viewer.optString("about").takeIf { it.isNotBlank() },
-            animeCount = anime.optInt("count"),
-            episodesWatched = anime.optInt("episodesWatched"),
-            daysWatched = anime.optInt("minutesWatched") / 1440.0,
-            animeMeanScore = anime.optDouble("meanScore", 0.0),
-            mangaCount = manga.optInt("count"),
-            chaptersRead = manga.optInt("chaptersRead"),
-            volumesRead = manga.optInt("volumesRead"),
-            daysRead = manga.optInt("minutesRead") / 1440.0,
-            mangaMeanScore = manga.optDouble("meanScore", 0.0),
+            animeCount = anime.optInt("count"), episodesWatched = anime.optInt("episodesWatched"),
+            daysWatched = anime.optInt("minutesWatched") / 1440.0, animeMeanScore = anime.optDouble("meanScore", 0.0),
+            mangaCount = manga.optInt("count"), chaptersRead = manga.optInt("chaptersRead"), volumesRead = manga.optInt("volumesRead"),
+            daysRead = 0.0, mangaMeanScore = manga.optDouble("meanScore", 0.0),
         )
     }
 
@@ -94,9 +86,7 @@ class AniListGraphQlService @Inject constructor(
         client.newCall(request).execute().use { response ->
             val payload = response.body?.string().orEmpty()
             check(response.isSuccessful) { "AniList request failed (${response.code})" }
-            JSONObject(payload).also { result ->
-                check(!result.has("errors")) { result.getJSONArray("errors").toString() }
-            }
+            JSONObject(payload).also { result -> check(!result.has("errors")) { result.getJSONArray("errors").toString() } }
         }
     }
 }
