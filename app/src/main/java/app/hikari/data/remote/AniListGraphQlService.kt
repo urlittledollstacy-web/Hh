@@ -33,7 +33,7 @@ class AniListGraphQlService @Inject constructor(
     }.getOrDefault(emptyList())
 
     suspend fun airingSoon(page: Int = 1, perPage: Int = 12, now: Long = System.currentTimeMillis() / 1000): List<MediaSummary> = runCatching {
-        val query = "query(\$page:Int!, \$perPage:Int!, \$now:Int!){Page(page:\$page,perPage:\$perPage){airingSchedules(airingAt_greater:\$now,sort:TIME_ASC){episode airingAt media{id type title{userPreferred romaji english native} coverImage{large} averageScore episodes chapters}}}}"
+        val query = "query(\$page:Int!, \$perPage:Int!, \$now:Int!){Page(page:\$page,perPage:\$perPage){airingSchedules(notYetAired:true,airingAt_greater:\$now,sort:TIME){episode airingAt media{id type title{userPreferred romaji english native} coverImage{large} averageScore episodes chapters}}}}"
         val data = execute(query, mapOf("page" to page, "perPage" to perPage, "now" to now))
             .getJSONObject("data").getJSONObject("Page").getJSONArray("airingSchedules")
         List(data.length()) { index ->
