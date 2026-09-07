@@ -39,7 +39,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
+import androidx.compose.ui.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -84,6 +84,7 @@ class CalendarViewModel @Inject constructor(
     private val _state = MutableStateFlow(CalendarUiState())
     val state: StateFlow<CalendarUiState> = _state.asStateFlow()
     private var libraryIds: Set<Int> = emptySet()
+    private var libraryLoaded = false
     private var allEntries: List<AiringScheduleEntry> = emptyList()
 
     init { refresh() }
@@ -96,10 +97,24 @@ class CalendarViewModel @Inject constructor(
 
     fun setShowMine(value: Boolean) {
         val current = _state.value
-        _state.value = current.copy(
-            showMine = value,
-            entries = entriesFor(current.selectedDay, value),
-        )
+        if (!value) {
+            _state.value = current.copy(showMine = false, entries = entriesFor(current.selectedDay, false))
+            return
+        }
+        if (libraryLoaded) {
+            _state.value = current.copy(showMine = true, entries = entriesFor(current.selectedDay, true))
+            return
+        }
+        _state.value = current.copy(showMine = true, loading = true, error = null)
+        viewModelScope.launch {
+            loadLibrary()
+            val latest = _state.value
+            _state.value = latest.copy(
+                showMine = true,
+                loading = false,
+                entries = entriesFor(latest.selectedDay, true),
+            )
+        }
     }
 
     fun refresh() = viewModelScope.launch {
@@ -108,18 +123,24 @@ class CalendarViewModel @Inject constructor(
         val start = days.firstOrNull()?.start ?: dayStart(System.currentTimeMillis())
         val end = (days.lastOrNull()?.start ?: start) + DAY_SECONDS
         val result = runCatching { calendarApi.airingSchedule(start, end) }
-        val library = runCatching { libraryApi.library(app.hikari.core.model.MediaType.ANIME) }.getOrNull()
-        libraryIds = library?.entries.orEmpty().filter { it.status == "CURRENT" }.map { it.media.id }.toSet()
+        val wantsMine = _state.value.showMine
+        if (wantsMine) loadLibrary()
         allEntries = result.getOrDefault(emptyList()).distinctBy { it.id }.sortedBy { it.airingAt }
         _state.value = CalendarUiState(
             days = days,
             selectedDay = 0,
-            entries = entriesFor(days, 0, false),
+            entries = entriesFor(days, 0, wantsMine),
             myEntries = allEntries.filter { it.mediaId in libraryIds },
-            showMine = false,
+            showMine = wantsMine,
             loading = false,
             error = result.exceptionOrNull()?.message?.takeIf { allEntries.isEmpty() },
         )
+    }
+
+    private suspend fun loadLibrary() {
+        val library = runCatching { libraryApi.library(app.hikari.core.model.MediaType.ANIME) }.getOrNull()
+        libraryIds = library?.entries.orEmpty().filter { it.status == "CURRENT" }.map { it.media.id }.toSet()
+        libraryLoaded = library != null
     }
 
     private fun entriesFor(index: Int, showMine: Boolean): List<AiringScheduleEntry> {
