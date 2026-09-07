@@ -77,7 +77,6 @@ fun ProfileDetails(vm: ProfileViewModel = hiltViewModel()) {
                         "Titles" to profile.mangaCount.toString(),
                         "Chapters" to profile.chaptersRead.toString(),
                         "Volumes" to profile.volumesRead.toString(),
-                        "Days read" to formatDays(profile.daysRead),
                         "Mean score" to formatScore(profile.mangaMeanScore),
                     )
                 )
