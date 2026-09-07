@@ -85,6 +85,8 @@ import coil3.compose.AsyncImage
 import dagger.hilt.android.AndroidEntryPoint
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -148,8 +150,11 @@ class HomeViewModel @Inject constructor(private val api: AniListGraphQlService) 
     init { refresh() }
     fun refresh() = viewModelScope.launch {
         _state.value = _state.value.copy(refreshing = true, error = null)
-        val trending = runCatching { api.trending(MediaType.ANIME) }.getOrDefault(emptyList())
-        val airing = runCatching { api.airingSoon() }.getOrDefault(emptyList())
+        val (trending, airing) = coroutineScope {
+            val trendingDeferred = async { runCatching { api.trending(MediaType.ANIME) }.getOrDefault(emptyList()) }
+            val airingDeferred = async { runCatching { api.airingSoon() }.getOrDefault(emptyList()) }
+            trendingDeferred.await() to airingDeferred.await()
+        }
         _state.value = HomeUiState(trending, airing, false, false, if (trending.isEmpty() && airing.isEmpty()) "AniList is unavailable right now. Try again in a moment." else null)
     }
 }
