@@ -2,6 +2,7 @@ package app.hikari.media
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -17,6 +18,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ArrowBack
@@ -131,7 +133,27 @@ fun MediaDetailsScreen(summary: MediaSummary, onBack: () -> Unit, vm: MediaDetai
 
 @Composable private fun InfoLine(label: String, value: String) { Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text(label, color = MaterialTheme.colorScheme.onSurfaceVariant); Text(value, fontWeight = FontWeight.Medium) } }
 @Composable private fun DetailSection(title: String, content: @Composable () -> Unit) { Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) { Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold); content() } }
-@Composable private fun TagRow(tags: List<String>) { Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { tags.forEach { tag -> Text(tag, Modifier.clip(RoundedCornerShape(50)).background(MaterialTheme.colorScheme.surfaceVariant).padding(horizontal = 10.dp, vertical = 6.dp), fontSize = MaterialTheme.typography.labelMedium.fontSize) } } }
+
+@Composable private fun TagRow(tags: List<String>) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        tags.forEach { tag ->
+            Text(
+                tag,
+                Modifier
+                    .clip(RoundedCornerShape(50))
+                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                fontSize = MaterialTheme.typography.labelMedium.fontSize,
+                maxLines = 1
+            )
+        }
+    }
+}
 
 @Composable private fun RelationCard(relation: MediaRelation, onOpenRelation: (MediaSummary) -> Unit) {
     Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 5.dp).clip(RoundedCornerShape(14.dp)).background(MaterialTheme.colorScheme.surfaceVariant).clickable { onOpenRelation(relation.media) }.padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
