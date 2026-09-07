@@ -15,19 +15,22 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Refresh
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -68,11 +71,23 @@ class LibraryViewModel @Inject constructor(private val api: AniListLibraryServic
             .onSuccess { entries -> _state.value = LibraryUiState(entries = entries, loading = false) }
             .onFailure { error -> _state.value = LibraryUiState(loading = false, error = error.message ?: "Couldn't load your library.") }
     }
+
+    fun save(type: MediaType, entry: LibraryEntry, status: String, progress: Int, score: Double, onDone: () -> Unit) = viewModelScope.launch {
+        _state.value = _state.value.copy(saving = true, error = null)
+        runCatching { api.updateEntry(entry, status, progress, score) }
+            .onSuccess {
+                _state.value = _state.value.copy(saving = false)
+                load(type)
+                onDone()
+            }
+            .onFailure { error -> _state.value = _state.value.copy(saving = false, error = error.message ?: "Couldn't save your AniList changes.") }
+    }
 }
 
 data class LibraryUiState(
     val entries: List<LibraryEntry> = emptyList(),
     val loading: Boolean = false,
+    val saving: Boolean = false,
     val error: String? = null,
 )
 
@@ -80,6 +95,7 @@ data class LibraryUiState(
 fun LibraryScreen(signedIn: Boolean, padding: PaddingValues, vm: LibraryViewModel = hiltViewModel()) {
     var type by remember { mutableStateOf(MediaType.ANIME) }
     var status by remember { mutableStateOf("ALL") }
+    var selected by remember { mutableStateOf<LibraryEntry?>(null) }
     val state by vm.state.collectAsState()
 
     LaunchedEffect(signedIn, type) {
@@ -87,24 +103,15 @@ fun LibraryScreen(signedIn: Boolean, padding: PaddingValues, vm: LibraryViewMode
     }
 
     if (!signedIn) {
-        Column(
-            Modifier.fillMaxSize().padding(24.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
+        Column(Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("Library", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
-            Text(
-                "Connect AniList to sync your anime and manga lists in real time.",
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            Text("Connect AniList to sync your anime and manga lists in real time.", color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         return
     }
 
-    // AniList uses the same API status enum for anime and manga, but the user-facing
-    // names are media-specific: CURRENT means Watching for anime and Reading for manga;
-    // REPEATING means Rewatching and Rereading respectively.
-    val availableStatuses = listOf("ALL", "CURRENT", "PLANNING", "COMPLETED", "REPEATING", "PAUSED", "DROPPED")
     val filtered = if (status == "ALL") state.entries else state.entries.filter { it.status == status }
+    val statuses = statusOptions(type)
 
     LazyColumn(
         contentPadding = PaddingValues(20.dp, 28.dp, 20.dp, padding.calculateBottomPadding() + 24.dp),
@@ -116,137 +123,132 @@ fun LibraryScreen(signedIn: Boolean, padding: PaddingValues, vm: LibraryViewMode
                     Text("Library", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
                     Text("Synced from AniList", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                IconButton(onClick = { vm.load(type) }, enabled = !state.loading) {
-                    if (state.loading) {
-                        CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-                    } else {
-                        Icon(Icons.Outlined.Refresh, "Refresh library")
-                    }
+                IconButton(onClick = { vm.load(type) }, enabled = !state.loading && !state.saving) {
+                    if (state.loading) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp) else Icon(Icons.Outlined.Refresh, "Refresh library")
                 }
             }
         }
-        item {
-            ChoiceRow(listOf("ANIME", "MANGA"), type.name) {
-                type = MediaType.valueOf(it)
-                status = "ALL"
-            }
-        }
-        item {
-            ChoiceRow(availableStatuses, status, type) { status = it }
-        }
-        if (state.error != null) {
-            item {
-                Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)) {
-                    Row(
-                        Modifier.fillMaxWidth().padding(14.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Text(
-                            state.error.orEmpty(),
-                            Modifier.weight(1f),
-                            color = MaterialTheme.colorScheme.onErrorContainer,
-                        )
-                        TextButton(onClick = { vm.load(type) }) { Text("Retry") }
-                    }
+        item { ChoiceRow(listOf("ANIME", "MANGA"), type.name) { type = MediaType.valueOf(it); status = "ALL" } }
+        item { ChoiceRow(statuses, status) { status = it } }
+        if (state.error != null) item {
+            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)) {
+                Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(state.error.orEmpty(), Modifier.weight(1f), color = MaterialTheme.colorScheme.onErrorContainer)
+                    TextButton(onClick = { vm.load(type) }) { Text("Retry") }
                 }
             }
         }
         if (!state.loading && state.error == null && filtered.isEmpty()) {
-            item {
-                Text(
-                    if (status == "ALL") {
-                        "Your ${type.name.lowercase()} library is empty."
-                    } else {
-                        "No titles in ${statusLabel(status, type)}."
-                    },
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
+            item { Text(if (status == "ALL") "Your ${type.name.lowercase()} library is empty." else "No titles in ${statusLabel(status, type)}.", color = MaterialTheme.colorScheme.onSurfaceVariant) }
         }
-        items(filtered, key = { it.id }) { entry -> LibraryCard(entry, type) }
+        items(filtered, key = { it.id }) { entry -> LibraryCard(entry, type) { selected = entry } }
+    }
+
+    selected?.let { entry ->
+        LibraryEditorDialog(
+            entry = entry,
+            type = type,
+            saving = state.saving,
+            onDismiss = { selected = null },
+            onSave = { newStatus, progress, score -> vm.save(type, entry, newStatus, progress, score) { selected = null } },
+        )
     }
 }
 
 @Composable
-private fun LibraryCard(entry: LibraryEntry, type: MediaType) {
-    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
+private fun LibraryCard(entry: LibraryEntry, type: MediaType, onClick: () -> Unit) {
+    Card(
+        modifier = Modifier.clickable(onClick = onClick),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+    ) {
         Row(Modifier.fillMaxWidth().padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(
-                Modifier.width(72.dp)
-                    .aspectRatio(.7f)
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(MaterialTheme.colorScheme.surface),
-            ) {
-                entry.media.coverUrl?.let {
-                    AsyncImage(
-                        model = it,
-                        contentDescription = entry.media.title,
-                        modifier = Modifier.fillMaxSize(),
-                        contentScale = ContentScale.Crop,
-                    )
-                }
+            Box(Modifier.width(72.dp).aspectRatio(.7f).clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.surface)) {
+                entry.media.coverUrl?.let { AsyncImage(model = it, contentDescription = entry.media.title, Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
             }
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(
-                    entry.media.title,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
+                Text(entry.media.title, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 Text(statusLabel(entry.status, type), fontSize = 12.sp, color = MaterialTheme.colorScheme.primary)
                 Text(progressLabel(entry, type), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            entry.score?.takeIf { it > 0 }?.let {
-                Text("${formatScore(it)} ★", fontWeight = FontWeight.Bold)
-            }
+            entry.score?.let { Text("${formatScore(it)} ★", fontWeight = FontWeight.Bold) }
         }
     }
 }
 
 @Composable
-private fun ChoiceRow(
-    options: List<String>,
-    selected: String,
-    type: MediaType? = null,
-    onSelect: (String) -> Unit,
+private fun LibraryEditorDialog(
+    entry: LibraryEntry,
+    type: MediaType,
+    saving: Boolean,
+    onDismiss: () -> Unit,
+    onSave: (String, Int, Double) -> Unit,
 ) {
+    var selectedStatus by remember(entry.id, entry.status) { mutableStateOf(entry.status) }
+    var progressText by remember(entry.id, entry.progress) { mutableStateOf(entry.progress.toString()) }
+    var scoreText by remember(entry.id, entry.score) { mutableStateOf(entry.score?.let { formatScore(it) } ?: "0") }
+    val progress = progressText.toIntOrNull()?.coerceAtLeast(0) ?: 0
+    val score = scoreText.toDoubleOrNull()?.coerceIn(0.0, 100.0) ?: 0.0
+
+    AlertDialog(
+        onDismissRequest = { if (!saving) onDismiss() },
+        title = { Text(entry.media.title) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                entry.media.coverUrl?.let {
+                    AsyncImage(model = it, contentDescription = entry.media.title, modifier = Modifier.fillMaxWidth().aspectRatio(1.7f).clip(RoundedCornerShape(14.dp)), contentScale = ContentScale.Crop)
+                }
+                Text(if (type == MediaType.ANIME) "Anime tracking" else "Manga tracking", color = MaterialTheme.colorScheme.primary)
+                Text("Status", fontWeight = FontWeight.SemiBold)
+                ChoiceRow(statusOptions(type), selectedStatus) { selectedStatus = it }
+                OutlinedTextField(value = progressText, onValueChange = { progressText = it.filter(Char::isDigit) }, label = { Text(if (type == MediaType.ANIME) "Episodes watched" else "Chapters read") }, singleLine = true)
+                OutlinedTextField(value = scoreText, onValueChange = { scoreText = it.filter { char -> char.isDigit() || char == '.' } }, label = { Text("Your score (0-100)") }, singleLine = true)
+            }
+        },
+        confirmButton = {
+            Button(onClick = { onSave(selectedStatus, progress, score) }, enabled = !saving) {
+                if (saving) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp) else Text("Save to AniList")
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss, enabled = !saving) { Text("Cancel") } },
+    )
+}
+
+@Composable
+private fun ChoiceRow(options: List<String>, selected: String, onSelect: (String) -> Unit) {
     LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         items(options) { option ->
             val active = option == selected
-            Box(
-                Modifier.clip(RoundedCornerShape(18.dp))
-                    .background(
-                        if (active) MaterialTheme.colorScheme.primary
-                        else MaterialTheme.colorScheme.surfaceVariant,
-                    )
-                    .clickable { onSelect(option) }
-                    .padding(horizontal = 14.dp, vertical = 9.dp),
-            ) {
-                Text(
-                    optionLabel(option, type),
-                    color = if (active) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
-                    fontSize = 12.sp,
-                )
+            Box(Modifier.clip(RoundedCornerShape(18.dp)).background(if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant).clickable { onSelect(option) }.padding(horizontal = 14.dp, vertical = 9.dp)) {
+                Text(optionLabel(option), color = if (active) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface, fontSize = 12.sp)
             }
         }
     }
 }
 
-private fun optionLabel(value: String, type: MediaType?): String = when (value) {
+private fun statusOptions(type: MediaType): List<String> = listOf("ALL", "CURRENT", "PLANNING", "COMPLETED", "REPEATING", "PAUSED", "DROPPED")
+
+private fun optionLabel(value: String): String = when (value) {
     "ALL" -> "All"
-    "ANIME" -> "Anime"
-    "MANGA" -> "Manga"
-    "CURRENT" -> if (type == MediaType.MANGA) "Reading" else "Watching"
-    "REPEATING" -> if (type == MediaType.MANGA) "Rereading" else "Rewatching"
-    "PLANNING" -> if (type == MediaType.MANGA) "Plan to read" else "Plan to watch"
+    "CURRENT" -> "Watching"
+    "PLANNING" -> "Planning"
+    "REPEATING" -> "Rewatching"
+    "REREADING" -> "Rereading"
     "COMPLETED" -> "Completed"
     "PAUSED" -> "Paused"
     "DROPPED" -> "Dropped"
     else -> value.lowercase().replace('_', ' ').replaceFirstChar { it.uppercase() }
 }
 
-private fun statusLabel(value: String, type: MediaType): String = optionLabel(value, type)
+private fun statusLabel(value: String, type: MediaType): String = when (type) {
+    MediaType.ANIME -> optionLabel(value)
+    MediaType.MANGA -> when (value) {
+        "CURRENT" -> "Reading"
+        "PLANNING" -> "Plan to read"
+        "REPEATING" -> "Rereading"
+        else -> optionLabel(value)
+    }
+}
 
 private fun progressLabel(entry: LibraryEntry, type: MediaType): String = when (type) {
     MediaType.ANIME -> "${entry.progress} episodes${entry.media.episodesOrChapters?.let { " / $it" } ?: ""}"
