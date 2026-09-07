@@ -32,7 +32,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.BookmarkBorder
 import androidx.compose.material.icons.outlined.CalendarMonth
-import androidx.compose.material.icons.outlined.CompassCalibration
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.PersonOutline
 import androidx.compose.material.icons.outlined.Search
@@ -137,7 +136,7 @@ class MainActivity : ComponentActivity() {
 }
 
 private enum class Destination(val label: String, val icon: ImageVector) {
-    Home("Home", Icons.Outlined.Home), Discover("Discover", Icons.Outlined.CompassCalibration), Library("Library", Icons.Outlined.BookmarkBorder), Calendar("Calendar", Icons.Outlined.CalendarMonth), Profile("Profile", Icons.Outlined.PersonOutline)
+    Home("Home", Icons.Outlined.Home), Discover("Discover", Icons.Outlined.Search), Library("Library", Icons.Outlined.BookmarkBorder), Calendar("Calendar", Icons.Outlined.CalendarMonth), Profile("Profile", Icons.Outlined.PersonOutline)
 }
 private enum class AppTheme { System, Amoled, Aurora }
 private enum class NavigationStyle { Blur, Liquid, Off }
@@ -330,7 +329,7 @@ private fun HikariApp(signedIn: Boolean, onSignIn: () -> Unit, onSignOut: () -> 
                         NavigationRail(destination, { destination = it }, navStyle)
                         AppContent(destination, theme, navStyle, signedIn, onSignIn, onSignOut, { theme = it }, { navStyle = it }, PaddingValues(0.dp), { destination = it }, { selectedMedia = it }, { showTrending = true })
                     } else Box(Modifier.fillMaxSize()) {
-                        AppContent(destination, theme, navStyle, signedIn, onSignIn, onSignOut, { theme = it }, { navStyle = it }, PaddingValues(bottom = 104.dp), { destination = it }, { selectedMedia = it }, { showTrending = true })
+                        AppContent(destination, theme, navStyle, signedIn, onSignIn, onSignOut, { theme = it }, { theme = it }, PaddingValues(bottom = 104.dp), { destination = it }, { selectedMedia = it }, { showTrending = true })
                         BottomNavigation(destination, { destination = it }, navStyle, Modifier.align(Alignment.BottomCenter).padding(16.dp))
                     }
                 }
