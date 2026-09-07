@@ -373,9 +373,9 @@ private fun DiscoverScreen(padding: PaddingValues, onMediaClick: (MediaSummary) 
         if (state.query.isBlank()) {
             item { EmptyMessage(if (state.mode == SearchMode.MEDIA) "Start typing — Hikari will show suggestions automatically." else "Search for a genre or tag, then tap it to browse matching media.") }
         } else if (!state.searching && state.mode == SearchMode.TAGS_GENRES && state.taxonomyResults.isEmpty()) {
-            item { EmptyMessage("No tags or genres found for "${state.query.trim()}".") }
+            item { EmptyMessage("No tags or genres found for \"${state.query.trim()}\".") }
         } else if (!state.searching && state.mode == SearchMode.MEDIA && state.results.isEmpty()) {
-            item { EmptyMessage("No results found for "${state.query.trim()}".") }
+            item { EmptyMessage("No results found for \"${state.query.trim()}\".") }
         } else if (state.mode == SearchMode.TAGS_GENRES && state.taxonomyResults.isNotEmpty()) {
             item { Text("Tags & genres", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
             items(state.taxonomyResults, key = { "${it.kind}:${it.id}" }) { item ->
