@@ -72,7 +72,7 @@ class AniListLibraryService @Inject constructor(
         execute(
             mutation,
             mapOf(
-                "id" to entry.id,
+                "id" to entry.id.takeIf { it > 0 },
                 "mediaId" to entry.media.id,
                 "status" to status,
                 "score" to score,
