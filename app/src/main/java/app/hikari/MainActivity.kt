@@ -1,6 +1,8 @@
 package app.hikari
 
+import android.content.Intent
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
@@ -67,6 +69,10 @@ import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import app.hikari.core.auth.AniListAuthManager
+import app.hikari.core.auth.AuthCallbackResult
+import app.hikari.core.auth.AuthStartResult
+import app.hikari.core.auth.SecureTokenStore
 import app.hikari.core.model.MediaSummary
 import app.hikari.core.model.MediaType
 import app.hikari.data.remote.AniListGraphQlService
@@ -81,7 +87,53 @@ import javax.inject.Inject
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
-    override fun onCreate(savedInstanceState: Bundle?) { super.onCreate(savedInstanceState); setContent { HikariApp() } }
+    @Inject lateinit var authManager: AniListAuthManager
+    @Inject lateinit var tokenStore: SecureTokenStore
+
+    private var signedIn by mutableStateOf(false)
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        signedIn = tokenStore.accessToken() != null
+        setContent {
+            HikariApp(
+                signedIn = signedIn,
+                onSignIn = ::startAniListLogin,
+                onSignOut = ::signOut,
+            )
+        }
+        handleOAuthIntent(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleOAuthIntent(intent)
+    }
+
+    private fun startAniListLogin() {
+        when (authManager.startLogin(this)) {
+            AuthStartResult.Started -> Unit
+            AuthStartResult.MissingClientId -> Toast.makeText(this, "AniList login is not configured yet.", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun handleOAuthIntent(intent: Intent) {
+        when (val result = authManager.handleCallback(intent)) {
+            AuthCallbackResult.Success -> {
+                signedIn = true
+                Toast.makeText(this, "Connected to AniList.", Toast.LENGTH_SHORT).show()
+            }
+            is AuthCallbackResult.Error -> Toast.makeText(this, result.message, Toast.LENGTH_LONG).show()
+            null -> Unit
+        }
+    }
+
+    private fun signOut() {
+        authManager.logout()
+        signedIn = false
+        Toast.makeText(this, "Signed out of AniList.", Toast.LENGTH_SHORT).show()
+    }
 }
 
 private enum class Destination(val label: String, val icon: ImageVector) { Home("Home", Icons.Outlined.Home), Discover("Discover", Icons.Outlined.CompassCalibration), Library("Library", Icons.Outlined.BookmarkBorder), Calendar("Calendar", Icons.Outlined.CalendarMonth), Profile("Profile", Icons.Outlined.PersonOutline) }
@@ -113,7 +165,7 @@ class SearchViewModel @Inject constructor(private val api: AniListGraphQlService
 }
 
 @Composable
-private fun HikariApp() {
+private fun HikariApp(signedIn: Boolean, onSignIn: () -> Unit, onSignOut: () -> Unit) {
     var destination by remember { mutableStateOf(Destination.Home) }
     var theme by remember { mutableStateOf(AppTheme.System) }
     var navStyle by remember { mutableStateOf(NavigationStyle.Blur) }
@@ -123,9 +175,9 @@ private fun HikariApp() {
             androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize()) {
                 if (maxWidth >= 700.dp) Row(Modifier.fillMaxSize()) {
                     NavigationRail(destination, { destination = it }, navStyle)
-                    AppContent(destination, theme, navStyle, { theme = it }, { navStyle = it }, PaddingValues(0.dp), { destination = it })
+                    AppContent(destination, theme, navStyle, signedIn, onSignIn, onSignOut, { theme = it }, { navStyle = it }, PaddingValues(0.dp), { destination = it })
                 } else Box(Modifier.fillMaxSize()) {
-                    AppContent(destination, theme, navStyle, { theme = it }, { navStyle = it }, PaddingValues(bottom = 104.dp), { destination = it })
+                    AppContent(destination, theme, navStyle, signedIn, onSignIn, onSignOut, { theme = it }, { navStyle = it }, PaddingValues(bottom = 104.dp), { destination = it })
                     BottomNavigation(destination, { destination = it }, navStyle, Modifier.align(Alignment.BottomCenter).padding(16.dp))
                 }
             }
@@ -134,13 +186,13 @@ private fun HikariApp() {
 }
 
 @Composable
-private fun AppContent(destination: Destination, theme: AppTheme, navStyle: NavigationStyle, onTheme: (AppTheme) -> Unit, onNavStyle: (NavigationStyle) -> Unit, padding: PaddingValues, onDestination: (Destination) -> Unit) {
+private fun AppContent(destination: Destination, theme: AppTheme, navStyle: NavigationStyle, signedIn: Boolean, onSignIn: () -> Unit, onSignOut: () -> Unit, onTheme: (AppTheme) -> Unit, onNavStyle: (NavigationStyle) -> Unit, padding: PaddingValues, onDestination: (Destination) -> Unit) {
     when (destination) {
         Destination.Home -> HomeScreen(padding, onSearch = { onDestination(Destination.Discover) })
         Destination.Discover -> DiscoverScreen(padding)
         Destination.Library -> PlaceholderScreen("Your library", "ANILIST SYNC", "Sign in to keep your watching and reading progress organized across AniList.", "Sign in with AniList", padding)
         Destination.Calendar -> PlaceholderScreen("Airing calendar", "THIS WEEK", "See upcoming episodes at a glance.", "View today's airing", padding)
-        Destination.Profile -> ProfileScreen(theme, navStyle, onTheme, onNavStyle, padding)
+        Destination.Profile -> ProfileScreen(theme, navStyle, signedIn, onSignIn, onSignOut, onTheme, onNavStyle, padding)
     }
 }
 
@@ -182,7 +234,15 @@ private fun MediaRow(media: List<MediaSummary>, airing: Boolean = false) { LazyR
 private fun PlaceholderScreen(title: String, eyebrow: String, description: String, action: String, padding: PaddingValues) { Column(Modifier.fillMaxSize().padding(start = 24.dp, top = 36.dp, end = 24.dp, bottom = padding.calculateBottomPadding()), verticalArrangement = Arrangement.spacedBy(16.dp)) { Text(eyebrow, color = MaterialTheme.colorScheme.primary, fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.4.sp); Text(title, style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold); Text(description, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant); Button(onClick = {}, colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)) { Text(action) } } }
 
 @Composable
-private fun ProfileScreen(theme: AppTheme, navStyle: NavigationStyle, onTheme: (AppTheme) -> Unit, onNavStyle: (NavigationStyle) -> Unit, padding: PaddingValues) { LazyColumn(contentPadding = PaddingValues(20.dp, 28.dp, 20.dp, padding.calculateBottomPadding() + 24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) { item { Text("Profile", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold) }; item { Text("Browsing as guest", color = MaterialTheme.colorScheme.onSurfaceVariant) }; item { SettingGroup("Appearance") { Text("Theme", fontWeight = FontWeight.Medium); ChoiceRow(AppTheme.entries.map { it.name }, theme.name) { onTheme(AppTheme.valueOf(it)) }; Text("Navigation", fontWeight = FontWeight.Medium); ChoiceRow(NavigationStyle.entries.map { it.name }, navStyle.name) { onNavStyle(NavigationStyle.valueOf(it)) } } }; item { SettingGroup("Account") { Text("Sign in with AniList", fontWeight = FontWeight.Medium); Text("Sync your library and profile", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) } }; item { SettingGroup("Privacy") { Text("Your data stays yours", fontWeight = FontWeight.Medium); Text("No ads, analytics, or streaming features", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) } } } }
+private fun ProfileScreen(theme: AppTheme, navStyle: NavigationStyle, signedIn: Boolean, onSignIn: () -> Unit, onSignOut: () -> Unit, onTheme: (AppTheme) -> Unit, onNavStyle: (NavigationStyle) -> Unit, padding: PaddingValues) {
+    LazyColumn(contentPadding = PaddingValues(20.dp, 28.dp, 20.dp, padding.calculateBottomPadding() + 24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        item { Text("Profile", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold) }
+        item { Text(if (signedIn) "Connected to AniList" else "Browsing as guest", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+        item { SettingGroup("Appearance") { Text("Theme", fontWeight = FontWeight.Medium); ChoiceRow(AppTheme.entries.map { it.name }, theme.name) { onTheme(AppTheme.valueOf(it)) }; Text("Navigation", fontWeight = FontWeight.Medium); ChoiceRow(NavigationStyle.entries.map { it.name }, navStyle.name) { onNavStyle(NavigationStyle.valueOf(it)) } } }
+        item { SettingGroup("Account") { if (signedIn) { Text("AniList account connected", fontWeight = FontWeight.Medium); Text("Your access token is stored securely on this device.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant); Button(onClick = onSignOut, colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.surface)) { Text("Sign out", color = MaterialTheme.colorScheme.onSurface) } } else { Text("Sign in with AniList", fontWeight = FontWeight.Medium); Text("Sync your library and profile", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant); Button(onClick = onSignIn, colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)) { Text("Continue with AniList") } } } }
+        item { SettingGroup("Privacy") { Text("Your data stays yours", fontWeight = FontWeight.Medium); Text("No ads, analytics, or streaming features", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) } }
+    }
+}
 @Composable private fun SettingGroup(title: String, content: @Composable () -> Unit) { Column(verticalArrangement = Arrangement.spacedBy(10.dp)) { Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold); Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) { Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) { content() } } } }
 @Composable private fun ChoiceRow(options: List<String>, selected: String, onSelect: (String) -> Unit) { Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) { options.forEach { option -> val active = option == selected; Box(Modifier.clip(CircleShape).background(if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surface).clickable { onSelect(option) }.padding(horizontal = 14.dp, vertical = 10.dp)) { Text(option, color = if (active) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface, fontSize = 12.sp) } } } }
 
