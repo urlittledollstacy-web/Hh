@@ -91,11 +91,15 @@ class CalendarViewModel @Inject constructor(
     fun selectDay(index: Int) {
         val current = _state.value
         if (index !in current.days.indices) return
-        _state.value = current.copy(selectedDay = index, entries = entriesFor(index))
+        _state.value = current.copy(selectedDay = index, entries = entriesFor(index, current.showMine))
     }
 
     fun setShowMine(value: Boolean) {
-        _state.value = _state.value.copy(showMine = value, entries = entriesFor(_state.value.selectedDay))
+        val current = _state.value
+        _state.value = current.copy(
+            showMine = value,
+            entries = entriesFor(current.selectedDay, value),
+        )
     }
 
     fun refresh() = viewModelScope.launch {
@@ -110,7 +114,7 @@ class CalendarViewModel @Inject constructor(
         _state.value = CalendarUiState(
             days = days,
             selectedDay = 0,
-            entries = entriesFor(0),
+            entries = entriesFor(days, 0, false),
             myEntries = allEntries.filter { it.mediaId in libraryIds },
             showMine = false,
             loading = false,
@@ -118,10 +122,20 @@ class CalendarViewModel @Inject constructor(
         )
     }
 
-    private fun entriesFor(index: Int): List<AiringScheduleEntry> {
-        val day = _state.value.days.getOrNull(index) ?: return emptyList()
-        val source = if (_state.value.showMine) allEntries.filter { it.mediaId in libraryIds } else allEntries
-        return source.filter { it.airingAt >= day.start && it.airingAt < day.start + DAY_SECONDS }.sortedBy { it.airingAt }
+    private fun entriesFor(index: Int, showMine: Boolean): List<AiringScheduleEntry> {
+        return entriesFor(_state.value.days, index, showMine)
+    }
+
+    private fun entriesFor(
+        days: List<CalendarDay>,
+        index: Int,
+        showMine: Boolean,
+    ): List<AiringScheduleEntry> {
+        val day = days.getOrNull(index) ?: return emptyList()
+        val source = if (showMine) allEntries.filter { it.mediaId in libraryIds } else allEntries
+        return source
+            .filter { it.airingAt >= day.start && it.airingAt < day.start + DAY_SECONDS }
+            .sortedBy { it.airingAt }
     }
 
     private fun buildDays(): List<CalendarDay> {
