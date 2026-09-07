@@ -19,7 +19,7 @@ class AniListCalendarService @Inject constructor(
     private val tokenStore: SecureTokenStore,
 ) {
     suspend fun airingSoon(limit: Int = 12, now: Long = System.currentTimeMillis() / 1000): List<AiringScheduleEntry> = withContext(Dispatchers.IO) {
-        val query = "query(\$now:Int!,\$limit:Int!){Page(page:1,perPage:\$limit){airingSchedules(notYetAired:true,airingAt_greater:\$now,sort:TIME_ASC){id airingAt timeUntilAiring episode media{id title{userPreferred english romaji native} coverImage{large} averageScore episodes}}}}"
+        val query = "query(\$now:Int!,\$limit:Int!){Page(page:1,perPage:\$limit){airingSchedules(notYetAired:true,airingAt_greater:\$now,sort:TIME){id airingAt timeUntilAiring episode media{id title{userPreferred english romaji native} coverImage{large} averageScore episodes}}}}"
         val data = execute(query, mapOf("now" to now, "limit" to limit))
             .getJSONObject("data").getJSONObject("Page").getJSONArray("airingSchedules")
         List(data.length()) { index ->
