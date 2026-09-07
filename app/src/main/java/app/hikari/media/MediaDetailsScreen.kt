@@ -21,6 +21,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ArrowBack
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -46,9 +47,12 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import app.hikari.core.model.LibraryEntry
 import app.hikari.core.model.MediaDetail
 import app.hikari.core.model.MediaRelation
 import app.hikari.core.model.MediaSummary
+import app.hikari.core.model.ScoreFormat
+import app.hikari.data.remote.AniListLibraryService
 import app.hikari.data.remote.AniListMediaDetailService
 import coil3.compose.AsyncImage
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -80,9 +84,70 @@ class MediaDetailsViewModel @Inject constructor(
     }
 }
 
+sealed interface MediaTrackingState {
+    data object Hidden : MediaTrackingState
+    data object Loading : MediaTrackingState
+    data class Ready(
+        val entry: LibraryEntry,
+        val scoreFormat: ScoreFormat,
+        val saving: Boolean = false,
+        val error: String? = null,
+    ) : MediaTrackingState
+    data class Error(val message: String) : MediaTrackingState
+}
+
+@HiltViewModel
+class MediaTrackingViewModel @Inject constructor(
+    private val service: AniListLibraryService,
+) : ViewModel() {
+    private val _state = MutableStateFlow<MediaTrackingState>(MediaTrackingState.Hidden)
+    val state: StateFlow<MediaTrackingState> = _state.asStateFlow()
+
+    fun open(media: MediaSummary) {
+        viewModelScope.launch {
+            _state.value = MediaTrackingState.Loading
+            runCatching { service.library(media.type) }
+                .fold(
+                    { snapshot ->
+                        val existing = snapshot.entries.firstOrNull { it.media.id == media.id }
+                        _state.value = MediaTrackingState.Ready(
+                            existing ?: LibraryEntry(0, media, "PLANNING", 0, null),
+                            snapshot.scoreFormat,
+                        )
+                    },
+                    { _state.value = MediaTrackingState.Error("Couldn't load your AniList list. Make sure you're signed in and try again.") },
+                )
+        }
+    }
+
+    fun dismiss() {
+        _state.value = MediaTrackingState.Hidden
+    }
+
+    fun save(entry: LibraryEntry, status: String, progress: Int, score: Double) {
+        val current = _state.value as? MediaTrackingState.Ready ?: return
+        _state.value = current.copy(saving = true, error = null)
+        viewModelScope.launch {
+            runCatching { service.updateEntry(entry, status, progress, score) }
+                .fold(
+                    { _state.value = MediaTrackingState.Hidden },
+                    { _state.value = current.copy(saving = false, error = "Couldn't save your AniList changes. Try again.") },
+                )
+        }
+    }
+
+    fun retry(media: MediaSummary) = open(media)
+}
+
 @Composable
-fun MediaDetailsScreen(summary: MediaSummary, onBack: () -> Unit, vm: MediaDetailsViewModel = hiltViewModel()) {
+fun MediaDetailsScreen(
+    summary: MediaSummary,
+    onBack: () -> Unit,
+    vm: MediaDetailsViewModel = hiltViewModel(),
+    trackingVm: MediaTrackingViewModel = hiltViewModel(),
+) {
     val state by vm.state.collectAsState()
+    val trackingState by trackingVm.state.collectAsState()
     var currentSummary by remember(summary.id) { mutableStateOf(summary) }
     var history by remember(summary.id) { mutableStateOf(emptyList<MediaSummary>()) }
 
@@ -104,8 +169,44 @@ fun MediaDetailsScreen(summary: MediaSummary, onBack: () -> Unit, vm: MediaDetai
     when (val current = state) {
         MediaDetailState.Loading -> DetailLoading { goBack() }
         is MediaDetailState.Error -> DetailError(current.message, { goBack() }) { vm.load(currentSummary.id) }
-        is MediaDetailState.Ready -> DetailContent(current.media, { goBack() }) { relation -> openRelation(relation) }
+        is MediaDetailState.Ready -> DetailContent(current.media, { goBack() }, { relation -> openRelation(relation) }) { trackingVm.open(it) }
     }
+
+    when (val tracking = trackingState) {
+        MediaTrackingState.Hidden -> Unit
+        MediaTrackingState.Loading -> TrackingLoadingDialog()
+        is MediaTrackingState.Ready -> MediaTrackingDialog(
+            entry = tracking.entry,
+            type = tracking.entry.media.type,
+            scoreFormat = tracking.scoreFormat,
+            saving = tracking.saving,
+            error = tracking.error,
+            onDismiss = { trackingVm.dismiss() },
+            onSave = { status, progress, score -> trackingVm.save(tracking.entry, status, progress, score) },
+        )
+        is MediaTrackingState.Error -> TrackingErrorDialog(tracking.message, { trackingVm.dismiss() }) { trackingVm.retry(currentSummary) }
+    }
+}
+
+@Composable
+private fun TrackingLoadingDialog() {
+    AlertDialog(
+        onDismissRequest = {},
+        title = { Text("AniList tracking") },
+        text = { Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() } },
+        confirmButton = {},
+    )
+}
+
+@Composable
+private fun TrackingErrorDialog(message: String, onDismiss: () -> Unit, onRetry: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("AniList tracking") },
+        text = { Text(message, color = MaterialTheme.colorScheme.onSurfaceVariant) },
+        confirmButton = { Button(onClick = onRetry) { Text("Retry") } },
+        dismissButton = { androidx.compose.material3.TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
 }
 
 @Composable
@@ -129,7 +230,7 @@ private fun DetailError(message: String, onBack: () -> Unit, onRetry: () -> Unit
 }
 
 @Composable
-private fun DetailContent(media: MediaDetail, onBack: () -> Unit, onOpenRelation: (MediaSummary) -> Unit) {
+private fun DetailContent(media: MediaDetail, onBack: () -> Unit, onOpenRelation: (MediaSummary) -> Unit, onOpenTracking: (MediaSummary) -> Unit) {
     LazyColumn(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background), contentPadding = PaddingValues(bottom = 32.dp)) {
         item {
             Box(Modifier.fillMaxWidth().aspectRatio(3f).background(MaterialTheme.colorScheme.surfaceVariant)) {
@@ -150,7 +251,7 @@ private fun DetailContent(media: MediaDetail, onBack: () -> Unit, onOpenRelation
                 }
             }
         }
-        item { Button(onClick = {}, modifier = Modifier.fillMaxWidth().padding(20.dp)) { Text("Add to List") } }
+        item { Button(onClick = { onOpenTracking(media.summary) }, modifier = Modifier.fillMaxWidth().padding(20.dp)) { Text("Add to List") } }
         item { InfoGrid(media) }
         media.description?.takeIf { it.isNotBlank() }?.let { description -> item { DetailSection("Description") { Text(description, color = MaterialTheme.colorScheme.onSurfaceVariant) } } }
         if (media.genres.isNotEmpty()) item { DetailSection("Genres") { TagRow(media.genres) } }
@@ -186,18 +287,8 @@ private fun InfoGrid(media: MediaDetail) {
 
 @Composable
 private fun RelationCard(relation: MediaRelation, onOpenRelation: (MediaSummary) -> Unit) {
-    Row(
-        Modifier.fillMaxWidth()
-            .padding(horizontal = 20.dp, vertical = 5.dp)
-            .clip(RoundedCornerShape(14.dp))
-            .background(MaterialTheme.colorScheme.surfaceVariant)
-            .clickable { onOpenRelation(relation.media) }
-            .padding(8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Box(Modifier.size(54.dp).clip(RoundedCornerShape(9.dp)).background(MaterialTheme.colorScheme.surface)) {
-            relation.media.coverUrl?.let { AsyncImage(model = it, contentDescription = relation.media.title, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
-        }
+    Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 5.dp).clip(RoundedCornerShape(14.dp)).background(MaterialTheme.colorScheme.surfaceVariant).clickable { onOpenRelation(relation.media) }.padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.size(54.dp).clip(RoundedCornerShape(9.dp)).background(MaterialTheme.colorScheme.surface)) { relation.media.coverUrl?.let { AsyncImage(model = it, contentDescription = relation.media.title, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop) } }
         Spacer(Modifier.width(10.dp))
         Column(Modifier.weight(1f)) {
             Text(relation.relationType.uppercase(), color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
