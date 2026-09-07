@@ -26,7 +26,6 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -176,7 +175,14 @@ private fun LibraryCard(entry: LibraryEntry, type: MediaType, scoreFormat: Score
     ) {
         Row(Modifier.fillMaxWidth().padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.width(72.dp).aspectRatio(.7f).clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.surface)) {
-                entry.media.coverUrl?.let { AsyncImage(model = it, contentDescription = entry.media.title, Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
+                entry.media.coverUrl?.let { url ->
+                    AsyncImage(
+                        model = url,
+                        contentDescription = entry.media.title,
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Crop,
+                    )
+                }
             }
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -211,8 +217,22 @@ private fun LibraryEditorDialog(
         title = { Text(entry.media.title) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                entry.media.coverUrl?.let {
-                    AsyncImage(model = it, contentDescription = entry.media.title, modifier = Modifier.fillMaxWidth().aspectRatio(1.7f).clip(RoundedCornerShape(14.dp)), contentScale = ContentScale.Crop)
+                entry.media.coverUrl?.let { url ->
+                    Box(
+                        Modifier
+                            .fillMaxWidth()
+                            .aspectRatio(.7f)
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        AsyncImage(
+                            model = url,
+                            contentDescription = entry.media.title,
+                            modifier = Modifier.fillMaxSize(),
+                            contentScale = ContentScale.Fit,
+                        )
+                    }
                 }
                 Text(if (type == MediaType.ANIME) "Anime tracking" else "Manga tracking", color = MaterialTheme.colorScheme.primary)
                 Text("Status", fontWeight = FontWeight.SemiBold)
