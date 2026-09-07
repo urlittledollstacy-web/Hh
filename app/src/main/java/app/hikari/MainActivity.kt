@@ -323,6 +323,7 @@ private fun HomeScreen(padding: PaddingValues, onSearch: () -> Unit, onMediaClic
         item { if (state.loading) LoadingRow() else if (state.airing.isEmpty()) EmptyMessage("No upcoming episodes found.") else MediaRow(state.airing, true, onMediaClick) }
         item { Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) { Text("Trending now", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f)); IconButton(onClick = vm::refresh, enabled = !state.refreshing) { if (state.refreshing) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp) else Icon(Icons.Outlined.Refresh, "Refresh") } } }
         item { if (state.loading) LoadingRow() else if (state.trending.isEmpty()) EmptyMessage("No trending anime found.") else MediaRow(state.trending, false, onMediaClick) }
+        item { HomeRecommendationsSection(onMediaClick) }
     }
 }
 
