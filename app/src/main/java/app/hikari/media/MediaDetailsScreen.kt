@@ -131,8 +131,11 @@ private fun DetailError(message: String, onBack: () -> Unit, onRetry: () -> Unit
 private fun DetailContent(media: MediaDetail, onBack: () -> Unit, onOpenRelation: (MediaSummary) -> Unit) {
     LazyColumn(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background), contentPadding = PaddingValues(bottom = 32.dp)) {
         item {
-            Box(Modifier.fillMaxWidth().height(250.dp).background(MaterialTheme.colorScheme.surfaceVariant)) {
-                media.bannerUrl?.let { AsyncImage(model = it, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
+            // Keep the banner's proportions intact: it fills the available width while
+            // preserving its source aspect ratio. The fixed-height box was distorting
+            // some AniList banner artwork on-device.
+            Box(Modifier.fillMaxWidth().aspectRatio(3f).background(MaterialTheme.colorScheme.surfaceVariant)) {
+                media.bannerUrl?.let { AsyncImage(model = it, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Fit) }
                 IconButton(onClick = onBack, modifier = Modifier.padding(12.dp).align(Alignment.TopStart).background(MaterialTheme.colorScheme.surface.copy(alpha = .85f), RoundedCornerShape(50))) { Icon(Icons.Outlined.ArrowBack, "Back") }
             }
         }
