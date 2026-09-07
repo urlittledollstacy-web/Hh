@@ -19,6 +19,11 @@ data class MediaSummary(
     val episodesOrChapters: Int?,
 )
 
+data class MediaRelation(
+    val relationType: String,
+    val media: MediaSummary,
+)
+
 data class MediaDetail(
     val summary: MediaSummary,
     val description: String?,
@@ -35,7 +40,7 @@ data class MediaDetail(
     val favourites: Int?,
     val bannerUrl: String?,
     val studios: List<String>,
-    val relations: List<MediaSummary>,
+    val relations: List<MediaRelation>,
 )
 
 data class AniListUser(val id: Int, val name: String, val avatarUrl: String?, val about: String?)
