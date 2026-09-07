@@ -139,6 +139,7 @@ private enum class Destination(val label: String, val icon: ImageVector) {
     Home("Home", Icons.Outlined.Home), Discover("Discover", Icons.Outlined.Search), Library("Library", Icons.Outlined.BookmarkBorder), Calendar("Calendar", Icons.Outlined.CalendarMonth), Profile("Profile", Icons.Outlined.PersonOutline)
 }
 private enum class AppTheme { System, Amoled, White }
+private enum class AppPalette { Pink }
 private enum class NavigationStyle { Blur, Liquid, Off }
 
 data class HomeUiState(val trending: List<MediaSummary> = emptyList(), val airing: List<MediaSummary> = emptyList(), val loading: Boolean = true, val refreshing: Boolean = false, val error: String? = null)
@@ -309,10 +310,11 @@ class SearchViewModel @Inject constructor(private val api: AniListGraphQlService
 private fun HikariApp(signedIn: Boolean, onSignIn: () -> Unit, onSignOut: () -> Unit) {
     var destination by remember { mutableStateOf(Destination.Home) }
     var theme by remember { mutableStateOf(AppTheme.System) }
+    var palette by remember { mutableStateOf(AppPalette.Pink) }
     var navStyle by remember { mutableStateOf(NavigationStyle.Blur) }
     var selectedMedia by remember { mutableStateOf<MediaSummary?>(null) }
     var showTrending by remember { mutableStateOf(false) }
-    val colors = hikariColors(theme, isSystemInDarkTheme())
+    val colors = hikariColors(theme, isSystemInDarkTheme(), palette)
     MaterialTheme(colorScheme = colors) {
         Surface(Modifier.fillMaxSize(), color = colors.background) {
             if (selectedMedia != null) {
@@ -327,9 +329,9 @@ private fun HikariApp(signedIn: Boolean, onSignIn: () -> Unit, onSignOut: () -> 
                 BoxWithConstraints(Modifier.fillMaxSize()) {
                     if (maxWidth >= 700.dp) Row(Modifier.fillMaxSize()) {
                         NavigationRail(destination, { destination = it }, navStyle)
-                        AppContent(destination, theme, navStyle, signedIn, onSignIn, onSignOut, { theme = it }, { navStyle = it }, PaddingValues(0.dp), { destination = it }, { selectedMedia = it }, { showTrending = true })
+                        AppContent(destination, theme, palette, navStyle, signedIn, onSignIn, onSignOut, { theme = it }, { palette = it }, { navStyle = it }, PaddingValues(0.dp), { destination = it }, { selectedMedia = it }, { showTrending = true })
                     } else Box(Modifier.fillMaxSize()) {
-                        AppContent(destination, theme, navStyle, signedIn, onSignIn, onSignOut, { theme = it }, { navStyle = it }, PaddingValues(bottom = 104.dp), { destination = it }, { selectedMedia = it }, { showTrending = true })
+                        AppContent(destination, theme, palette, navStyle, signedIn, onSignIn, onSignOut, { theme = it }, { palette = it }, { navStyle = it }, PaddingValues(bottom = 104.dp), { destination = it }, { selectedMedia = it }, { showTrending = true })
                         BottomNavigation(destination, { destination = it }, navStyle, Modifier.align(Alignment.BottomCenter).padding(16.dp))
                     }
                 }
@@ -341,13 +343,13 @@ private fun HikariApp(signedIn: Boolean, onSignIn: () -> Unit, onSignOut: () -> 
 private fun maxWidthSafe(): Boolean = false
 
 @Composable
-private fun AppContent(destination: Destination, theme: AppTheme, navStyle: NavigationStyle, signedIn: Boolean, onSignIn: () -> Unit, onSignOut: () -> Unit, onTheme: (AppTheme) -> Unit, onNavStyle: (NavigationStyle) -> Unit, padding: PaddingValues, onDestination: (Destination) -> Unit, onMediaClick: (MediaSummary) -> Unit, onTrending: () -> Unit) {
+private fun AppContent(destination: Destination, theme: AppTheme, palette: AppPalette, navStyle: NavigationStyle, signedIn: Boolean, onSignIn: () -> Unit, onSignOut: () -> Unit, onTheme: (AppTheme) -> Unit, onPalette: (AppPalette) -> Unit, onNavStyle: (NavigationStyle) -> Unit, padding: PaddingValues, onDestination: (Destination) -> Unit, onMediaClick: (MediaSummary) -> Unit, onTrending: () -> Unit) {
     when (destination) {
         Destination.Home -> HomeScreen(padding, onSearch = { onDestination(Destination.Discover) }, onCalendar = { onDestination(Destination.Calendar) }, onTrending = onTrending, onMediaClick = onMediaClick)
         Destination.Discover -> DiscoverScreen(padding, onMediaClick)
         Destination.Library -> LibraryScreen(signedIn, padding)
         Destination.Calendar -> CalendarScreen(padding, onMediaClick, signedIn)
-        Destination.Profile -> ProfileScreen(theme, navStyle, signedIn, onSignIn, onSignOut, onTheme, onNavStyle, padding)
+        Destination.Profile -> ProfileScreen(theme, palette, navStyle, signedIn, onSignIn, onSignOut, onTheme, onPalette, onNavStyle, padding)
     }
 }
 
@@ -481,11 +483,11 @@ private fun MediaRow(media: List<MediaSummary>, airing: Boolean = false, onMedia
 
 @Composable private fun PlaceholderScreen(title: String, eyebrow: String, description: String, action: String, padding: PaddingValues) { Column(Modifier.fillMaxSize().padding(start = 24.dp, top = 36.dp, end = 24.dp, bottom = padding.calculateBottomPadding()), verticalArrangement = Arrangement.spacedBy(16.dp)) { Text(eyebrow, color = MaterialTheme.colorScheme.primary, fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.4.sp); Text(title, style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold); Text(description, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant); Button(onClick = {}, colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)) { Text(action) } } }
 
-@Composable private fun ProfileScreen(theme: AppTheme, navStyle: NavigationStyle, signedIn: Boolean, onSignIn: () -> Unit, onSignOut: () -> Unit, onTheme: (AppTheme) -> Unit, onNavStyle: (NavigationStyle) -> Unit, padding: PaddingValues) {
+@Composable private fun ProfileScreen(theme: AppTheme, palette: AppPalette, navStyle: NavigationStyle, signedIn: Boolean, onSignIn: () -> Unit, onSignOut: () -> Unit, onTheme: (AppTheme) -> Unit, onPalette: (AppPalette) -> Unit, onNavStyle: (NavigationStyle) -> Unit, padding: PaddingValues) {
     LazyColumn(contentPadding = PaddingValues(20.dp, 28.dp, 20.dp, padding.calculateBottomPadding() + 24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         item { Text("Profile", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold) }
         item { Text(if (signedIn) "Connected to AniList" else "Browsing as guest", color = MaterialTheme.colorScheme.onSurfaceVariant) }
-        item { SettingGroup("Appearance") { Text("Theme", fontWeight = FontWeight.Medium); ChoiceRow(AppTheme.entries.map { it.name }, theme.name) { onTheme(AppTheme.valueOf(it)) }; Text("Navigation", fontWeight = FontWeight.Medium); ChoiceRow(NavigationStyle.entries.map { it.name }, navStyle.name) { onNavStyle(NavigationStyle.valueOf(it)) } } }
+        item { SettingGroup("Appearance") { Text("Theme", fontWeight = FontWeight.Medium); ChoiceRow(AppTheme.entries.map { it.name }, theme.name) { onTheme(AppTheme.valueOf(it)) }; Text("Palette", fontWeight = FontWeight.Medium); ChoiceRow(AppPalette.entries.map { it.name }, palette.name) { onPalette(AppPalette.valueOf(it)) }; Text("Navigation", fontWeight = FontWeight.Medium); ChoiceRow(NavigationStyle.entries.map { it.name }, navStyle.name) { onNavStyle(NavigationStyle.valueOf(it)) } } }
         item { SettingGroup("Account") { if (signedIn) { ProfileDetails(); Button(onClick = onSignOut, colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.surface)) { Text("Sign out", color = MaterialTheme.colorScheme.onSurface) } } else { Text("Sign in with AniList", fontWeight = FontWeight.Medium); Text("Sync your library and profile", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant); Button(onClick = onSignIn, colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)) { Text("Continue with AniList") } } } }
         item { SettingGroup("Privacy") { Text("Your data stays yours", fontWeight = FontWeight.Medium); Text("No ads, analytics, or streaming features", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) } }
     }
@@ -495,4 +497,4 @@ private fun MediaRow(media: List<MediaSummary>, airing: Boolean = false, onMedia
 @Composable private fun BottomNavigation(selected: Destination, onSelect: (Destination) -> Unit, style: NavigationStyle, modifier: Modifier) { val surface = when (style) { NavigationStyle.Off -> MaterialTheme.colorScheme.surface; NavigationStyle.Blur -> MaterialTheme.colorScheme.surface.copy(alpha = .95f); NavigationStyle.Liquid -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .9f) }; Row(modifier.fillMaxWidth().clip(RoundedCornerShape(28.dp)).background(surface).border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = .15f), RoundedCornerShape(28.dp)).padding(5.dp), horizontalArrangement = Arrangement.SpaceEvenly) { Destination.entries.forEach { NavigationItem(it, it == selected) { onSelect(it) } } } }
 @Composable private fun NavigationRail(selected: Destination, onSelect: (Destination) -> Unit, style: NavigationStyle) { Column(Modifier.fillMaxHeight().width(96.dp).padding(12.dp).clip(RoundedCornerShape(28.dp)).background(if (style == NavigationStyle.Off) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .8f)).padding(vertical = 16.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) { Destination.entries.forEach { NavigationItem(it, it == selected) { onSelect(it) } } } }
 @Composable private fun NavigationItem(destination: Destination, selected: Boolean, onClick: () -> Unit) { Column(Modifier.width(64.dp).height(64.dp).clip(RoundedCornerShape(18.dp)).clickable(onClick = onClick).padding(5.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) { Icon(destination.icon, destination.label, tint = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(26.dp)); Text(destination.label, fontSize = 10.sp, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal, color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant) } }
-private fun hikariColors(theme: AppTheme, systemDark: Boolean) = if (theme == AppTheme.System && !systemDark) lightColorScheme(primary = Color(0xFF7054B8), onPrimary = Color.White, background = Color(0xFFFAF8FF), surface = Color.White, surfaceVariant = Color(0xFFF0EDF5), onSurface = Color(0xFF1C1B20), onSurfaceVariant = Color(0xFF5F5B66)) else if (theme == AppTheme.White) lightColorScheme(primary = Color(0xFF7054B8), onPrimary = Color.White, background = Color.White, surface = Color.White, surfaceVariant = Color(0xFFF3F1F5), onSurface = Color(0xFF1C1B20), onSurfaceVariant = Color(0xFF5F5B66)) else darkColorScheme(primary = Color(0xFFC5B3FF), onPrimary = Color(0xFF2A1750), background = Color.Black, surface = Color(0xFF0C0C0F), surfaceVariant = Color(0xFF111114), onSurface = Color(0xFFF1EDF5), onSurfaceVariant = Color(0xFFBDB8C5), outline = Color(0xFF5A5660), errorContainer = Color(0xFF4A171A), onErrorContainer = Color(0xFFFFDAD6))
+private fun hikariColors(theme: AppTheme, systemDark: Boolean, palette: AppPalette) = if (theme == AppTheme.System && !systemDark) lightColorScheme(primary = Color(0xFFFFD1DC), onPrimary = Color(0xFF4A2731), background = Color(0xFFFAF8FF), surface = Color.White, surfaceVariant = Color(0xFFF0EDF5), onSurface = Color(0xFF1C1B20), onSurfaceVariant = Color(0xFF5F5B66)) else if (theme == AppTheme.White) lightColorScheme(primary = Color(0xFFFFD1DC), onPrimary = Color(0xFF4A2731), background = Color.White, surface = Color.White, surfaceVariant = Color(0xFFF3F1F5), onSurface = Color(0xFF1C1B20), onSurfaceVariant = Color(0xFF5F5B66)) else darkColorScheme(primary = Color(0xFFFFD1DC), onPrimary = Color(0xFF4A2731), background = Color.Black, surface = Color(0xFF0C0C0F), surfaceVariant = Color(0xFF111114), onSurface = Color(0xFFF1EDF5), onSurfaceVariant = Color(0xFFBDB8C5), outline = Color(0xFF5A5660), errorContainer = Color(0xFF4A171A), onErrorContainer = Color(0xFFFFDAD6))
