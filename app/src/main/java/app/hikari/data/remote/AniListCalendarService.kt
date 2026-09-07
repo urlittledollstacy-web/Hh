@@ -19,33 +19,33 @@ class AniListCalendarService @Inject constructor(
     private val tokenStore: SecureTokenStore,
 ) {
     suspend fun airingSchedule(from: Long, to: Long): List<AiringScheduleEntry> = withContext(Dispatchers.IO) {
-        runCatching {
-            val results = mutableListOf<AiringScheduleEntry>()
-            for (page in 1..6) {
-                val query = "query(\$page:Int!,\$from:Int!,\$to:Int!){Page(page:\$page,perPage:50){pageInfo{hasNextPage}airingSchedules(airingAt_greater:\$from,airingAt_lesser:\$to,sort:AIRING_AT){id airingAt timeUntilAiring episode media{id type title{userPreferred english romaji native} coverImage{large} averageScore episodes chapters}}}}"
-                val pageObject = execute(query, mapOf("page" to page, "from" to from, "to" to to))
-                    .getJSONObject("data").getJSONObject("Page")
-                val data = pageObject.getJSONArray("airingSchedules")
-                for (index in 0 until data.length()) {
-                    val item = data.getJSONObject(index)
-                    val media = item.getJSONObject("media")
-                    results += AiringScheduleEntry(
-                        id = item.getLong("id"),
-                        airingAt = item.getLong("airingAt"),
-                        timeUntilAiring = item.optLong("timeUntilAiring"),
-                        episode = item.optInt("episode"),
-                        mediaId = media.getInt("id"),
-                        mediaType = runCatching { MediaType.valueOf(media.optString("type")) }.getOrDefault(MediaType.ANIME),
-                        title = preferredTitle(media.optJSONObject("title")),
-                        coverUrl = media.optJSONObject("coverImage")?.optString("large")?.takeIf { it.isNotBlank() },
-                        averageScore = media.optInt("averageScore").takeIf { it > 0 },
-                        totalEpisodes = media.optInt("episodes").takeIf { it > 0 },
-                    )
-                }
-                if (!pageObject.getJSONObject("pageInfo").optBoolean("hasNextPage")) break
+        val results = mutableListOf<AiringScheduleEntry>()
+        for (page in 1..6) {
+            val query = "query(\$page:Int!){Page(page:\$page,perPage:50){pageInfo{hasNextPage}airingSchedules(notYetAired:true,sort:AIRING_AT){id airingAt timeUntilAiring episode media{id type title{userPreferred english romaji native} coverImage{large} averageScore episodes chapters}}}}"
+            val pageObject = execute(query, mapOf("page" to page))
+                .getJSONObject("data").getJSONObject("Page")
+            val data = pageObject.getJSONArray("airingSchedules")
+            for (index in 0 until data.length()) {
+                val item = data.getJSONObject(index)
+                val airingAt = item.getLong("airingAt")
+                if (airingAt < from || airingAt >= to) continue
+                val media = item.getJSONObject("media")
+                results += AiringScheduleEntry(
+                    id = item.getLong("id"),
+                    airingAt = airingAt,
+                    timeUntilAiring = item.optLong("timeUntilAiring"),
+                    episode = item.optInt("episode"),
+                    mediaId = media.getInt("id"),
+                    mediaType = runCatching { MediaType.valueOf(media.optString("type")) }.getOrDefault(MediaType.ANIME),
+                    title = preferredTitle(media.optJSONObject("title")),
+                    coverUrl = media.optJSONObject("coverImage")?.optString("large")?.takeIf { it.isNotBlank() },
+                    averageScore = media.optInt("averageScore").takeIf { it > 0 },
+                    totalEpisodes = media.optInt("episodes").takeIf { it > 0 },
+                )
             }
-            results.distinctBy { it.id }.sortedBy { it.airingAt }
-        }.getOrDefault(emptyList())
+            if (!pageObject.getJSONObject("pageInfo").optBoolean("hasNextPage")) break
+        }
+        results.distinctBy { it.id }.sortedBy { it.airingAt }
     }
 
     private fun execute(query: String, variables: Map<String, Any?>): JSONObject {
