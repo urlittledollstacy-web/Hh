@@ -39,11 +39,10 @@ jobs:
             "build-tools;34.0.0"
           yes | sdkmanager --licenses >/dev/null || true
 
-      - name: Install Gradle
-        run: |
-          curl -fsSL -o /tmp/gradle.zip https://services.gradle.org/distributions/gradle-8.14.4-bin.zip
-          unzip -q /tmp/gradle.zip -d /tmp/gradle
-          echo "/tmp/gradle/gradle-8.14.4/bin" >> "$GITHUB_PATH"
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.14.4'
 
       - name: Prepare Android build environment
         run: |
