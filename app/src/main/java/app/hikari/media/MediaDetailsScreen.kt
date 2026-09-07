@@ -1,6 +1,7 @@
 package app.hikari.media
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -31,7 +32,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -43,6 +46,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import app.hikari.core.model.MediaDetail
+import app.hikari.core.model.MediaRelation
 import app.hikari.core.model.MediaSummary
 import app.hikari.data.remote.AniListMediaDetailService
 import coil3.compose.AsyncImage
@@ -67,7 +71,6 @@ class MediaDetailsViewModel @Inject constructor(
     val state: StateFlow<MediaDetailState> = _state.asStateFlow()
 
     fun load(id: Int) {
-        if (_state.value is MediaDetailState.Ready) return
         viewModelScope.launch {
             _state.value = MediaDetailState.Loading
             _state.value = runCatching { service.detail(id) }
@@ -79,17 +82,29 @@ class MediaDetailsViewModel @Inject constructor(
 @Composable
 fun MediaDetailsScreen(summary: MediaSummary, onBack: () -> Unit, vm: MediaDetailsViewModel = hiltViewModel()) {
     val state by vm.state.collectAsState()
-    LaunchedEffect(summary.id) { vm.load(summary.id) }
-    when (val current = state) {
-        MediaDetailState.Loading -> DetailLoading(onBack)
-        is MediaDetailState.Error -> DetailError(current.message, onBack) { vm.reload(summary.id) }
-        is MediaDetailState.Ready -> DetailContent(current.media, onBack)
-    }
-}
+    var currentSummary by remember(summary.id) { mutableStateOf(summary) }
+    var history by remember(summary.id) { mutableStateOf(emptyList<MediaSummary>()) }
 
-private fun MediaDetailsViewModel.reload(id: Int) {
-    val state = this.state.value
-    if (state is MediaDetailState.Error) load(id)
+    LaunchedEffect(currentSummary.id) { vm.load(currentSummary.id) }
+
+    val goBack = {
+        if (history.isNotEmpty()) {
+            currentSummary = history.last()
+            history = history.dropLast(1)
+        } else {
+            onBack()
+        }
+    }
+    val openRelation: (MediaSummary) -> Unit = { relation ->
+        history = history + currentSummary
+        currentSummary = relation
+    }
+
+    when (val current = state) {
+        MediaDetailState.Loading -> DetailLoading(::goBack)
+        is MediaDetailState.Error -> DetailError(current.message, ::goBack) { vm.load(currentSummary.id) }
+        is MediaDetailState.Ready -> DetailContent(current.media, ::goBack, openRelation)
+    }
 }
 
 @Composable
@@ -113,7 +128,7 @@ private fun DetailError(message: String, onBack: () -> Unit, onRetry: () -> Unit
 }
 
 @Composable
-private fun DetailContent(media: MediaDetail, onBack: () -> Unit) {
+private fun DetailContent(media: MediaDetail, onBack: () -> Unit, onOpenRelation: (MediaSummary) -> Unit) {
     LazyColumn(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background), contentPadding = PaddingValues(bottom = 32.dp)) {
         item {
             Box(Modifier.fillMaxWidth().height(250.dp).background(MaterialTheme.colorScheme.surfaceVariant)) {
@@ -141,8 +156,8 @@ private fun DetailContent(media: MediaDetail, onBack: () -> Unit) {
         if (media.tags.isNotEmpty()) item { DetailSection("Tags") { TagRow(media.tags.take(12)) } }
         if (media.studios.isNotEmpty()) item { DetailSection("Studios") { Text(media.studios.joinToString(" • ")) } }
         if (media.relations.isNotEmpty()) {
-            item { DetailSection("Relations") {} }
-            items(media.relations.take(12), key = { it.id }) { relation -> RelationCard(relation) }
+            item { DetailSection("Relations") { Text("Connected anime and manga", color = MaterialTheme.colorScheme.onSurfaceVariant) } }
+            items(media.relations.take(12), key = { it.media.id }) { relation -> RelationCard(relation, onOpenRelation) }
         }
     }
 }
@@ -167,4 +182,26 @@ private fun InfoGrid(media: MediaDetail) {
 @Composable private fun InfoLine(label: String, value: String) { Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text(label, color = MaterialTheme.colorScheme.onSurfaceVariant); Text(value, fontWeight = FontWeight.Medium) } }
 @Composable private fun DetailSection(title: String, content: @Composable () -> Unit) { Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) { Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold); content() } }
 @Composable private fun TagRow(tags: List<String>) { Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { tags.forEach { tag -> Text(tag, Modifier.clip(RoundedCornerShape(50)).background(MaterialTheme.colorScheme.surfaceVariant).padding(horizontal = 10.dp, vertical = 6.dp), fontSize = MaterialTheme.typography.labelMedium.fontSize) } } }
-@Composable private fun RelationCard(media: MediaSummary) { Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 5.dp).clip(RoundedCornerShape(14.dp)).background(MaterialTheme.colorScheme.surfaceVariant).padding(8.dp), verticalAlignment = Alignment.CenterVertically) { Box(Modifier.size(54.dp).clip(RoundedCornerShape(9.dp))) { media.coverUrl?.let { AsyncImage(model = it, contentDescription = media.title, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop) } }; Spacer(Modifier.width(10.dp)); Column { Text(media.title, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis); Text(if (media.type.name == "ANIME") "Anime" else "Manga", color = MaterialTheme.colorScheme.onSurfaceVariant) } } }
+
+@Composable
+private fun RelationCard(relation: MediaRelation, onOpenRelation: (MediaSummary) -> Unit) {
+    Row(
+        Modifier.fillMaxWidth()
+            .padding(horizontal = 20.dp, vertical = 5.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .clickable { onOpenRelation(relation.media) }
+            .padding(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(Modifier.size(54.dp).clip(RoundedCornerShape(9.dp)).background(MaterialTheme.colorScheme.surface)) {
+            relation.media.coverUrl?.let { AsyncImage(model = it, contentDescription = relation.media.title, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
+        }
+        Spacer(Modifier.width(10.dp))
+        Column(Modifier.weight(1f)) {
+            Text(relation.relationType.uppercase(), color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+            Text(relation.media.title, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Text(if (relation.media.type.name == "ANIME") "Anime" else "Manga", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
