@@ -11,6 +11,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -76,8 +77,9 @@ import app.hikari.core.auth.SecureTokenStore
 import app.hikari.core.model.MediaSummary
 import app.hikari.core.model.MediaType
 import app.hikari.data.remote.AniListGraphQlService
+import app.hikari.profile.ProfileDetails
 import coil3.compose.AsyncImage
-import dagger.hilt.android.AndroidEntryPoint
+aimport dagger.hilt.android.AndroidEntryPoint
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -89,19 +91,12 @@ import javax.inject.Inject
 class MainActivity : ComponentActivity() {
     @Inject lateinit var authManager: AniListAuthManager
     @Inject lateinit var tokenStore: SecureTokenStore
-
     private var signedIn by mutableStateOf(false)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         signedIn = tokenStore.accessToken() != null
-        setContent {
-            HikariApp(
-                signedIn = signedIn,
-                onSignIn = ::startAniListLogin,
-                onSignOut = ::signOut,
-            )
-        }
+        setContent { HikariApp(signedIn, ::startAniListLogin, ::signOut) }
         handleOAuthIntent(intent)
     }
 
@@ -120,10 +115,7 @@ class MainActivity : ComponentActivity() {
 
     private fun handleOAuthIntent(intent: Intent) {
         when (val result = authManager.handleCallback(intent)) {
-            AuthCallbackResult.Success -> {
-                signedIn = true
-                Toast.makeText(this, "Connected to AniList.", Toast.LENGTH_SHORT).show()
-            }
+            AuthCallbackResult.Success -> { signedIn = true; Toast.makeText(this, "Connected to AniList.", Toast.LENGTH_SHORT).show() }
             is AuthCallbackResult.Error -> Toast.makeText(this, result.message, Toast.LENGTH_LONG).show()
             null -> Unit
         }
@@ -136,7 +128,9 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private enum class Destination(val label: String, val icon: ImageVector) { Home("Home", Icons.Outlined.Home), Discover("Discover", Icons.Outlined.CompassCalibration), Library("Library", Icons.Outlined.BookmarkBorder), Calendar("Calendar", Icons.Outlined.CalendarMonth), Profile("Profile", Icons.Outlined.PersonOutline) }
+private enum class Destination(val label: String, val icon: ImageVector) {
+    Home("Home", Icons.Outlined.Home), Discover("Discover", Icons.Outlined.CompassCalibration), Library("Library", Icons.Outlined.BookmarkBorder), Calendar("Calendar", Icons.Outlined.CalendarMonth), Profile("Profile", Icons.Outlined.PersonOutline)
+}
 private enum class AppTheme { System, Amoled, Aurora }
 private enum class NavigationStyle { Blur, Liquid, Off }
 
@@ -172,7 +166,7 @@ private fun HikariApp(signedIn: Boolean, onSignIn: () -> Unit, onSignOut: () -> 
     val colors = hikariColors(theme, isSystemInDarkTheme())
     MaterialTheme(colorScheme = colors) {
         Surface(Modifier.fillMaxSize(), color = colors.background) {
-            androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize()) {
+            BoxWithConstraints(Modifier.fillMaxSize()) {
                 if (maxWidth >= 700.dp) Row(Modifier.fillMaxSize()) {
                     NavigationRail(destination, { destination = it }, navStyle)
                     AppContent(destination, theme, navStyle, signedIn, onSignIn, onSignOut, { theme = it }, { navStyle = it }, PaddingValues(0.dp), { destination = it })
@@ -239,7 +233,7 @@ private fun ProfileScreen(theme: AppTheme, navStyle: NavigationStyle, signedIn: 
         item { Text("Profile", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold) }
         item { Text(if (signedIn) "Connected to AniList" else "Browsing as guest", color = MaterialTheme.colorScheme.onSurfaceVariant) }
         item { SettingGroup("Appearance") { Text("Theme", fontWeight = FontWeight.Medium); ChoiceRow(AppTheme.entries.map { it.name }, theme.name) { onTheme(AppTheme.valueOf(it)) }; Text("Navigation", fontWeight = FontWeight.Medium); ChoiceRow(NavigationStyle.entries.map { it.name }, navStyle.name) { onNavStyle(NavigationStyle.valueOf(it)) } } }
-        item { SettingGroup("Account") { if (signedIn) { Text("AniList account connected", fontWeight = FontWeight.Medium); Text("Your access token is stored securely on this device.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant); Button(onClick = onSignOut, colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.surface)) { Text("Sign out", color = MaterialTheme.colorScheme.onSurface) } } else { Text("Sign in with AniList", fontWeight = FontWeight.Medium); Text("Sync your library and profile", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant); Button(onClick = onSignIn, colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)) { Text("Continue with AniList") } } } }
+        item { SettingGroup("Account") { if (signedIn) { ProfileDetails(); Button(onClick = onSignOut, colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.surface)) { Text("Sign out", color = MaterialTheme.colorScheme.onSurface) } } else { Text("Sign in with AniList", fontWeight = FontWeight.Medium); Text("Sync your library and profile", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant); Button(onClick = onSignIn, colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)) { Text("Continue with AniList") } } } }
         item { SettingGroup("Privacy") { Text("Your data stays yours", fontWeight = FontWeight.Medium); Text("No ads, analytics, or streaming features", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) } }
     }
 }
