@@ -24,6 +24,22 @@ data class MediaRelation(
     val media: MediaSummary,
 )
 
+data class MediaCharacter(
+    val id: Int,
+    val name: String,
+    val imageUrl: String?,
+    val role: String,
+    val voiceActorName: String?,
+    val voiceActorImageUrl: String?,
+)
+
+data class MediaStaff(
+    val id: Int,
+    val name: String,
+    val imageUrl: String?,
+    val roles: List<String>,
+)
+
 data class MediaDetail(
     val summary: MediaSummary,
     val description: String?,
@@ -41,6 +57,8 @@ data class MediaDetail(
     val bannerUrl: String?,
     val studios: List<String>,
     val relations: List<MediaRelation>,
+    val characters: List<MediaCharacter>,
+    val staff: List<MediaStaff>,
 )
 
 data class AniListUser(val id: Int, val name: String, val avatarUrl: String?, val about: String?)
