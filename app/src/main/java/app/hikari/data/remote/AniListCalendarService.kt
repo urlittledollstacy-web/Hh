@@ -22,7 +22,7 @@ class AniListCalendarService @Inject constructor(
         runCatching {
             val results = mutableListOf<AiringScheduleEntry>()
             for (page in 1..6) {
-                val query = "query(\$page:Int!,\$from:Int!,\$to:Int!){Page(page:\$page,perPage:50){pageInfo{hasNextPage}airingSchedules(airingAt_greater:\$from,airingAt_lesser:\$to,sort:TIME_ASC){id airingAt timeUntilAiring episode media{id type title{userPreferred english romaji native} coverImage{large} averageScore episodes chapters}}}}"
+                val query = "query(\$page:Int!,\$from:Int!,\$to:Int!){Page(page:\$page,perPage:50){pageInfo{hasNextPage}airingSchedules(airingAt_greater:\$from,airingAt_lesser:\$to,sort:AIRING_AT){id airingAt timeUntilAiring episode media{id type title{userPreferred english romaji native} coverImage{large} averageScore episodes chapters}}}}"
                 val pageObject = execute(query, mapOf("page" to page, "from" to from, "to" to to))
                     .getJSONObject("data").getJSONObject("Page")
                 val data = pageObject.getJSONArray("airingSchedules")
