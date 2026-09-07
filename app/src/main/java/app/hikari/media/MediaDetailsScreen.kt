@@ -105,13 +105,11 @@ fun MediaDetailsScreen(summary: MediaSummary, onBack: () -> Unit, vm: MediaDetai
                     Box(Modifier.width(126.dp).height(180.dp).clip(RoundedCornerShape(16.dp)).background(MaterialTheme.colorScheme.surfaceVariant).align(Alignment.BottomStart)) {
                         media.summary.coverUrl?.let { AsyncImage(model = it, contentDescription = media.summary.title, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
                     }
-                    Column(Modifier.align(Alignment.BottomEnd).width(Modifier.fillMaxWidth().let { it }), horizontalAlignment = Alignment.Start) {
-                        Row(Modifier.fillMaxWidth().padding(start = 162.dp, end = 20.dp, bottom = 6.dp), verticalAlignment = Alignment.Bottom) {
-                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                Text(media.summary.title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, maxLines = 4, overflow = TextOverflow.Ellipsis)
-                                Text(if (media.summary.type.name == "ANIME") "Anime" else "Manga", color = MaterialTheme.colorScheme.primary)
-                                media.summary.averageScore?.let { Text("★ $it%", fontWeight = FontWeight.SemiBold) }
-                            }
+                    Row(Modifier.fillMaxWidth().align(Alignment.BottomEnd).padding(start = 162.dp, end = 20.dp, bottom = 6.dp), verticalAlignment = Alignment.Bottom) {
+                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text(media.summary.title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, maxLines = 4, overflow = TextOverflow.Ellipsis)
+                            Text(if (media.summary.type.name == "ANIME") "Anime" else "Manga", color = MaterialTheme.colorScheme.primary)
+                            media.summary.averageScore?.let { Text("★ $it%", fontWeight = FontWeight.SemiBold) }
                         }
                     }
                 }
