@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Refresh
@@ -86,14 +87,23 @@ fun LibraryScreen(signedIn: Boolean, padding: PaddingValues, vm: LibraryViewMode
     }
 
     if (!signedIn) {
-        Column(Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Column(
+            Modifier.fillMaxSize().padding(24.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
             Text("Library", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
-            Text("Connect AniList to sync your anime and manga lists in real time.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(
+                "Connect AniList to sync your anime and manga lists in real time.",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
         return
     }
 
-    val availableStatuses = listOf("ALL") + state.entries.map { it.status }.distinct()
+    // AniList uses the same API status enum for anime and manga, but the user-facing
+    // names are media-specific: CURRENT means Watching for anime and Reading for manga;
+    // REPEATING means Rewatching and Rereading respectively.
+    val availableStatuses = listOf("ALL", "CURRENT", "PLANNING", "COMPLETED", "REPEATING", "PAUSED", "DROPPED")
     val filtered = if (status == "ALL") state.entries else state.entries.filter { it.status == status }
 
     LazyColumn(
@@ -107,22 +117,51 @@ fun LibraryScreen(signedIn: Boolean, padding: PaddingValues, vm: LibraryViewMode
                     Text("Synced from AniList", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 IconButton(onClick = { vm.load(type) }, enabled = !state.loading) {
-                    if (state.loading) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp) else Icon(Icons.Outlined.Refresh, "Refresh library")
+                    if (state.loading) {
+                        CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                    } else {
+                        Icon(Icons.Outlined.Refresh, "Refresh library")
+                    }
                 }
             }
         }
-        item { ChoiceRow(listOf("ANIME", "MANGA"), type.name) { type = MediaType.valueOf(it); status = "ALL" } }
-        item { ChoiceRow(availableStatuses, status) { status = it } }
-        if (state.error != null) item {
-            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)) {
-                Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text(state.error.orEmpty(), Modifier.weight(1f), color = MaterialTheme.colorScheme.onErrorContainer)
-                    TextButton(onClick = { vm.load(type) }) { Text("Retry") }
+        item {
+            ChoiceRow(listOf("ANIME", "MANGA"), type.name) {
+                type = MediaType.valueOf(it)
+                status = "ALL"
+            }
+        }
+        item {
+            ChoiceRow(availableStatuses, status, type) { status = it }
+        }
+        if (state.error != null) {
+            item {
+                Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)) {
+                    Row(
+                        Modifier.fillMaxWidth().padding(14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            state.error.orEmpty(),
+                            Modifier.weight(1f),
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                        )
+                        TextButton(onClick = { vm.load(type) }) { Text("Retry") }
+                    }
                 }
             }
         }
         if (!state.loading && state.error == null && filtered.isEmpty()) {
-            item { Text(if (status == "ALL") "Your ${type.name.lowercase()} library is empty." else "No titles in ${statusLabel(status)}.", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            item {
+                Text(
+                    if (status == "ALL") {
+                        "Your ${type.name.lowercase()} library is empty."
+                    } else {
+                        "No titles in ${statusLabel(status, type)}."
+                    },
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
         items(filtered, key = { it.id }) { entry -> LibraryCard(entry, type) }
     }
@@ -132,45 +171,82 @@ fun LibraryScreen(signedIn: Boolean, padding: PaddingValues, vm: LibraryViewMode
 private fun LibraryCard(entry: LibraryEntry, type: MediaType) {
     Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
         Row(Modifier.fillMaxWidth().padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.width(72.dp).aspectRatio(.7f).clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.surface)) {
-                entry.media.coverUrl?.let { AsyncImage(model = it, contentDescription = entry.media.title, Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
+            Box(
+                Modifier.width(72.dp)
+                    .aspectRatio(.7f)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(MaterialTheme.colorScheme.surface),
+            ) {
+                entry.media.coverUrl?.let {
+                    AsyncImage(
+                        model = it,
+                        contentDescription = entry.media.title,
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Crop,
+                    )
+                }
             }
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(entry.media.title, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                Text(statusLabel(entry.status), fontSize = 12.sp, color = MaterialTheme.colorScheme.primary)
+                Text(
+                    entry.media.title,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(statusLabel(entry.status, type), fontSize = 12.sp, color = MaterialTheme.colorScheme.primary)
                 Text(progressLabel(entry, type), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            entry.score?.takeIf { it > 0 }?.let { Text("${formatScore(it)} ★", fontWeight = FontWeight.Bold) }
+            entry.score?.takeIf { it > 0 }?.let {
+                Text("${formatScore(it)} ★", fontWeight = FontWeight.Bold)
+            }
         }
     }
 }
 
 @Composable
-private fun ChoiceRow(options: List<String>, selected: String, onSelect: (String) -> Unit) {
-    androidx.compose.foundation.lazy.LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+private fun ChoiceRow(
+    options: List<String>,
+    selected: String,
+    type: MediaType? = null,
+    onSelect: (String) -> Unit,
+) {
+    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         items(options) { option ->
             val active = option == selected
-            Box(Modifier.clip(RoundedCornerShape(18.dp)).background(if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant).clickable { onSelect(option) }.padding(horizontal = 14.dp, vertical = 9.dp)) {
-                Text(optionLabel(option), color = if (active) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface, fontSize = 12.sp)
+            Box(
+                Modifier.clip(RoundedCornerShape(18.dp))
+                    .background(
+                        if (active) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.surfaceVariant,
+                    )
+                    .clickable { onSelect(option) }
+                    .padding(horizontal = 14.dp, vertical = 9.dp),
+            ) {
+                Text(
+                    optionLabel(option, type),
+                    color = if (active) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
+                    fontSize = 12.sp,
+                )
             }
         }
     }
 }
 
-private fun optionLabel(value: String): String = when (value) {
+private fun optionLabel(value: String, type: MediaType?): String = when (value) {
     "ALL" -> "All"
-    "CURRENT" -> "Watching"
-    "REPEATING" -> "Rewatching"
-    "REREADING" -> "Rereading"
+    "ANIME" -> "Anime"
+    "MANGA" -> "Manga"
+    "CURRENT" -> if (type == MediaType.MANGA) "Reading" else "Watching"
+    "REPEATING" -> if (type == MediaType.MANGA) "Rereading" else "Rewatching"
+    "PLANNING" -> if (type == MediaType.MANGA) "Plan to read" else "Plan to watch"
     "COMPLETED" -> "Completed"
-    "PLANNING" -> "Planning"
     "PAUSED" -> "Paused"
     "DROPPED" -> "Dropped"
     else -> value.lowercase().replace('_', ' ').replaceFirstChar { it.uppercase() }
 }
 
-private fun statusLabel(value: String): String = optionLabel(value)
+private fun statusLabel(value: String, type: MediaType): String = optionLabel(value, type)
 
 private fun progressLabel(entry: LibraryEntry, type: MediaType): String = when (type) {
     MediaType.ANIME -> "${entry.progress} episodes${entry.media.episodesOrChapters?.let { " / $it" } ?: ""}"
