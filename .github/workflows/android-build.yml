@@ -45,6 +45,11 @@ jobs:
           ./gradlew --version
           ls -la app
 
+      - name: Use the GitHub Actions JDK
+        run: |
+          sed -i "s|^org.gradle.java.home=.*$|org.gradle.java.home=$JAVA_HOME|" gradle.properties
+          grep '^org.gradle.java.home=' gradle.properties
+
       - name: Build debug APK
         run: ./gradlew :app:assembleDebug --no-daemon --stacktrace --info
 
