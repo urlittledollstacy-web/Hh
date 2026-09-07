@@ -14,7 +14,7 @@ import org.json.JSONObject
 import javax.inject.Inject
 import javax.inject.Singleton
 
-/** Thin AniList GraphQL transport. Queries intentionally request only fields each UI needs. */
+/** Thin AniList GraphQL transport used by the first real-data UI slice. */
 @Singleton
 class AniListGraphQlService @Inject constructor(
     private val client: OkHttpClient,
@@ -24,6 +24,25 @@ class AniListGraphQlService @Inject constructor(
         "query(\$page:Int!, \$type:MediaType!){Page(page:\$page,perPage:20){media(type:\$type,sort:TRENDING_DESC){id type title{romaji english} coverImage{large} averageScore episodes chapters}}}",
         mapOf("page" to page, "type" to type.name), type,
     )
+
+    suspend fun airingSoon(page: Int = 1, perPage: Int = 12, now: Long = System.currentTimeMillis() / 1000): List<MediaSummary> {
+        val query = "query(\$page:Int!, \$perPage:Int!, \$now:Int!){Page(page:\$page,perPage:\$perPage){airingSchedules(airingAt_greater:\$now,sort:TIME_ASC){episode airingAt media{id type title{romaji english} coverImage{large} averageScore episodes chapters}}}}"
+        val data = execute(query, mapOf("page" to page, "perPage" to perPage, "now" to now))
+            .getJSONObject("data").getJSONObject("Page").getJSONArray("airingSchedules")
+        return List(data.length()) { index ->
+            val media = data.getJSONObject(index).getJSONObject("media")
+            val titleObject = media.getJSONObject("title")
+            val title = titleObject.optString("english").ifBlank { titleObject.optString("romaji") }
+            MediaSummary(
+                id = media.getInt("id"),
+                type = MediaType.ANIME,
+                title = title,
+                coverUrl = media.optJSONObject("coverImage")?.optString("large"),
+                averageScore = media.optInt("averageScore").takeIf { it != 0 },
+                episodesOrChapters = media.optInt("episodes").takeIf { it != 0 },
+            )
+        }
+    }
 
     suspend fun search(query: String, type: MediaType?, page: Int = 1): List<MediaSummary> = mediaPage(
         "query(\$page:Int!, \$search:String!, \$type:MediaType){Page(page:\$page,perPage:20){media(search:\$search,type:\$type,sort:SEARCH_MATCH){id type title{romaji english} coverImage{large} averageScore episodes chapters}}}",
@@ -45,7 +64,9 @@ class AniListGraphQlService @Inject constructor(
         client.newCall(request).execute().use { response ->
             val payload = response.body?.string().orEmpty()
             check(response.isSuccessful) { "AniList request failed (${response.code})" }
-            JSONObject(payload).also { result -> check(!result.has("errors")) { result.getJSONArray("errors").toString() } }
+            JSONObject(payload).also { result ->
+                check(!result.has("errors")) { result.getJSONArray("errors").toString() }
+            }
         }
     }
 }
