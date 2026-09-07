@@ -32,21 +32,15 @@ class AniListLibraryService @Inject constructor(
                 val entry = entries.getJSONObject(j)
                 val id = entry.optInt("id", 0)
                 if (id == 0 || unique.containsKey(id)) continue
-
                 val media = entry.optJSONObject("media") ?: continue
                 val mediaId = media.optInt("id", 0)
                 if (mediaId == 0) continue
-
                 val titleObject = media.optJSONObject("title")
                 val title = titleObject?.let {
-                    listOf("userPreferred", "english", "romaji", "native")
-                        .asSequence()
-                        .mapNotNull { key ->
-                            if (it.has(key) && !it.isNull(key)) it.optString(key).trim() else null
-                        }
+                    listOf("userPreferred", "english", "romaji", "native").asSequence()
+                        .mapNotNull { key -> if (it.has(key) && !it.isNull(key)) it.optString(key).trim() else null }
                         .firstOrNull { value -> value.isNotBlank() && value != "null" }
                 } ?: "Untitled #$mediaId"
-
                 unique[id] = LibraryEntry(
                     id = id,
                     media = MediaSummary(
@@ -55,10 +49,7 @@ class AniListLibraryService @Inject constructor(
                         title = title,
                         coverUrl = media.optJSONObject("coverImage")?.optString("large")?.takeIf { it.isNotBlank() },
                         averageScore = media.optInt("averageScore").takeIf { it != 0 },
-                        episodesOrChapters = (
-                            if (type == MediaType.MANGA) media.optInt("chapters")
-                            else media.optInt("episodes")
-                        ).takeIf { it != 0 },
+                        episodesOrChapters = (if (type == MediaType.MANGA) media.optInt("chapters") else media.optInt("episodes")).takeIf { it != 0 },
                     ),
                     status = entry.optString("status", "UNKNOWN"),
                     progress = entry.optInt("progress"),
@@ -69,11 +60,22 @@ class AniListLibraryService @Inject constructor(
         return@withContext unique.values.toList()
     }
 
+    suspend fun updateEntry(entry: LibraryEntry, status: String, progress: Int, score: Double) = withContext(Dispatchers.IO) {
+        val mutation = "mutation(\$id:Int,\$mediaId:Int,\$status:MediaListStatus,\$score:Float,\$progress:Int){SaveMediaListEntry(id:\$id,mediaId:\$mediaId,status:\$status,score:\$score,progress:\$progress){id status progress score}}"
+        execute(
+            mutation,
+            mapOf(
+                "id" to entry.id,
+                "mediaId" to entry.media.id,
+                "status" to status,
+                "score" to score,
+                "progress" to progress,
+            ),
+        )
+    }
+
     private fun execute(query: String, variables: Map<String, Any?>): JSONObject {
-        val body = JSONObject()
-            .put("query", query)
-            .put("variables", JSONObject(variables))
-            .toString()
+        val body = JSONObject().put("query", query).put("variables", JSONObject(variables)).toString()
             .toRequestBody("application/json".toMediaType())
         val request = Request.Builder()
             .url("https://graphql.anilist.co")
