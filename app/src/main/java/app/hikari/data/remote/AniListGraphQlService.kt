@@ -53,7 +53,7 @@ class AniListGraphQlService @Inject constructor(
     }.getOrDefault(emptyList())
 
     suspend fun viewerProfile(): AniListProfile = execute(
-        "query{Viewer{id name avatar{large} banner about statistics{anime{count episodesWatched minutesWatched meanScore} manga{count chaptersRead volumesRead meanScore}}}}",
+        "query{Viewer{id name avatar{large} bannerImage about statistics{anime{count episodesWatched minutesWatched meanScore} manga{count chaptersRead volumesRead meanScore}}}}",
         emptyMap(),
     ).getJSONObject("data").getJSONObject("Viewer").let { viewer ->
         val statistics = viewer.optJSONObject("statistics") ?: JSONObject()
@@ -62,7 +62,7 @@ class AniListGraphQlService @Inject constructor(
         AniListProfile(
             id = viewer.getInt("id"), name = viewer.getString("name"),
             avatarUrl = viewer.optJSONObject("avatar")?.optString("large"),
-            bannerUrl = viewer.optString("banner").takeIf { it.isNotBlank() },
+            bannerUrl = viewer.optString("bannerImage").takeIf { it.isNotBlank() },
             about = viewer.optString("about").takeIf { it.isNotBlank() },
             animeCount = anime.optInt("count"), episodesWatched = anime.optInt("episodesWatched"),
             daysWatched = anime.optInt("minutesWatched") / 1440.0, animeMeanScore = anime.optDouble("meanScore", 0.0),
