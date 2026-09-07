@@ -38,5 +38,8 @@ class DatabaseConverters {
 }
 
 @TypeConverters(DatabaseConverters::class)
-@Database(entities = [CachedMediaEntity::class], version = 1, exportSchema = false)
-abstract class HikariDatabase : RoomDatabase() { abstract fun mediaCacheDao(): MediaCacheDao }
+@Database(entities = [CachedMediaEntity::class, HikariFavoriteEntity::class], version = 2, exportSchema = false)
+abstract class HikariDatabase : RoomDatabase() {
+    abstract fun mediaCacheDao(): MediaCacheDao
+    abstract fun hikariFavoriteDao(): HikariFavoriteDao
+}
