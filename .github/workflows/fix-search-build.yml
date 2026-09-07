@@ -1,0 +1,39 @@
+name: Fix search build
+
+on:
+  push:
+    branches:
+      - codex/create-personal-anilist-android-client
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: codex/create-personal-anilist-android-client
+          fetch-depth: 1
+      - name: Fix Kotlin string literals
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('app/src/main/java/app/hikari/MainActivity.kt')
+          s = p.read_text()
+          replacements = {
+              'EmptyMessage("No tags or genres found for "${state.query.trim()}".")': 'EmptyMessage("No tags or genres found for \\\"${state.query.trim()}\\\".")',
+              'EmptyMessage("No results found for "${state.query.trim()}".")': 'EmptyMessage("No results found for \\\"${state.query.trim()}\\\".")',
+          }
+          for old, new in replacements.items():
+              s = s.replace(old, new)
+          p.write_text(s)
+          PY
+          git diff --check
+          git diff -- app/src/main/java/app/hikari/MainActivity.kt
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add app/src/main/java/app/hikari/MainActivity.kt
+          git commit -m 'Fix search mode Kotlin string literals' || exit 0
+          git push origin HEAD:codex/create-personal-anilist-android-client
