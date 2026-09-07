@@ -52,24 +52,100 @@ class AniListGraphQlService @Inject constructor(
         )
     }.getOrDefault(emptyList())
 
-    suspend fun viewerProfile(): AniListProfile = execute(
-        "query{Viewer{id name avatar{large} bannerImage about statistics{anime{count episodesWatched minutesWatched meanScore} manga{count chaptersRead volumesRead meanScore}}}}",
-        emptyMap(),
-    ).getJSONObject("data").getJSONObject("Viewer").let { viewer ->
+    suspend fun viewerProfile(): AniListProfile {
+        val viewer = execute(
+            "query{Viewer{id name avatar{large} bannerImage about statistics{anime{count episodesWatched minutesWatched meanScore} manga{count chaptersRead volumesRead meanScore}}}}",
+            emptyMap(),
+        ).getJSONObject("data").getJSONObject("Viewer")
+
         val statistics = viewer.optJSONObject("statistics") ?: JSONObject()
         val anime = statistics.optJSONObject("anime") ?: JSONObject()
         val manga = statistics.optJSONObject("manga") ?: JSONObject()
-        AniListProfile(
+
+        var animeCount = anime.optInt("count")
+        var episodesWatched = anime.optInt("episodesWatched")
+        var daysWatched = anime.optInt("minutesWatched") / 1440.0
+        var animeMeanScore = anime.optDouble("meanScore", 0.0)
+        var mangaCount = manga.optInt("count")
+        var chaptersRead = manga.optInt("chaptersRead")
+        var volumesRead = manga.optInt("volumesRead")
+        var mangaMeanScore = manga.optDouble("meanScore", 0.0)
+
+        // Some AniList accounts can return zeroed aggregate statistics. Use the user's
+        // actual list entries as a fallback so Profile matches the list pages.
+        if (animeCount == 0 || mangaCount == 0 || episodesWatched == 0 || chaptersRead == 0) {
+            val fallback = loadViewerListStats(viewer.getInt("id"))
+            if (animeCount == 0) animeCount = fallback.animeCount
+            if (episodesWatched == 0) episodesWatched = fallback.episodesWatched
+            if (daysWatched == 0.0) daysWatched = fallback.daysWatched
+            if (animeMeanScore == 0.0) animeMeanScore = fallback.animeMeanScore
+            if (mangaCount == 0) mangaCount = fallback.mangaCount
+            if (chaptersRead == 0) chaptersRead = fallback.chaptersRead
+            if (volumesRead == 0) volumesRead = fallback.volumesRead
+            if (mangaMeanScore == 0.0) mangaMeanScore = fallback.mangaMeanScore
+        }
+
+        return AniListProfile(
             id = viewer.getInt("id"), name = viewer.getString("name"),
             avatarUrl = viewer.optJSONObject("avatar")?.optString("large"),
             bannerUrl = viewer.optionalText("bannerImage"),
             about = viewer.optionalText("about"),
-            animeCount = anime.optInt("count"), episodesWatched = anime.optInt("episodesWatched"),
-            daysWatched = anime.optInt("minutesWatched") / 1440.0, animeMeanScore = anime.optDouble("meanScore", 0.0),
-            mangaCount = manga.optInt("count"), chaptersRead = manga.optInt("chaptersRead"), volumesRead = manga.optInt("volumesRead"),
-            daysRead = 0.0, mangaMeanScore = manga.optDouble("meanScore", 0.0),
+            animeCount = animeCount, episodesWatched = episodesWatched,
+            daysWatched = daysWatched, animeMeanScore = animeMeanScore,
+            mangaCount = mangaCount, chaptersRead = chaptersRead, volumesRead = volumesRead,
+            daysRead = 0.0, mangaMeanScore = mangaMeanScore,
         )
     }
+
+    private suspend fun loadViewerListStats(userId: Int): ListStats {
+        val animeQuery = "query(\$userId:Int!){MediaListCollection(userId:\$userId,type:ANIME){lists{entries{score progress media{id duration}}}}}"
+        val mangaQuery = "query(\$userId:Int!){MediaListCollection(userId:\$userId,type:MANGA){lists{entries{score progress progressVolumes media{id}}}}}"
+        val animeLists = execute(animeQuery, mapOf("userId" to userId))
+            .getJSONObject("data").getJSONObject("MediaListCollection").getJSONArray("lists")
+        val mangaLists = execute(mangaQuery, mapOf("userId" to userId))
+            .getJSONObject("data").getJSONObject("MediaListCollection").getJSONArray("lists")
+
+        val animeEntries = flattenEntries(animeLists)
+        val mangaEntries = flattenEntries(mangaLists)
+        val animeScored = animeEntries.mapNotNull { it.optDouble("score", 0.0).takeIf { score -> score > 0.0 } }
+        val mangaScored = mangaEntries.mapNotNull { it.optDouble("score", 0.0).takeIf { score -> score > 0.0 } }
+        val animeMinutes = animeEntries.sumOf { entry ->
+            val progress = entry.optInt("progress")
+            val duration = entry.optJSONObject("media")?.optInt("duration") ?: 0
+            progress * duration
+        }
+
+        return ListStats(
+            animeCount = animeEntries.size,
+            episodesWatched = animeEntries.sumOf { it.optInt("progress") },
+            daysWatched = animeMinutes / 1440.0,
+            animeMeanScore = animeScored.average().takeIf { !it.isNaN() } ?: 0.0,
+            mangaCount = mangaEntries.size,
+            chaptersRead = mangaEntries.sumOf { it.optInt("progress") },
+            volumesRead = mangaEntries.sumOf { it.optInt("progressVolumes") },
+            mangaMeanScore = mangaScored.average().takeIf { !it.isNaN() } ?: 0.0,
+        )
+    }
+
+    private fun flattenEntries(lists: JSONArray): List<JSONObject> {
+        val entries = mutableListOf<JSONObject>()
+        for (i in 0 until lists.length()) {
+            val values = lists.getJSONObject(i).optJSONArray("entries") ?: continue
+            for (j in 0 until values.length()) entries += values.getJSONObject(j)
+        }
+        return entries
+    }
+
+    private data class ListStats(
+        val animeCount: Int,
+        val episodesWatched: Int,
+        val daysWatched: Double,
+        val animeMeanScore: Double,
+        val mangaCount: Int,
+        val chaptersRead: Int,
+        val volumesRead: Int,
+        val mangaMeanScore: Double,
+    )
 
     private suspend fun mediaPage(query: String, variables: Map<String, Any?>, requestedType: MediaType?): List<MediaSummary> {
         val data = execute(query, variables).getJSONObject("data").getJSONObject("Page").getJSONArray("media")
