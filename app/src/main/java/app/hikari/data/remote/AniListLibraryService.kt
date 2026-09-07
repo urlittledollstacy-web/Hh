@@ -10,7 +10,6 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
-import org.json.JSONArray
 import org.json.JSONObject
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -34,7 +33,9 @@ class AniListLibraryService @Inject constructor(
                 val id = entry.optInt("id", 0)
                 if (id == 0 || unique.containsKey(id)) continue
                 val media = entry.getJSONObject("media")
-                val title = media.getJSONObject("title").optString("english").ifBlank { media.getJSONObject("title").optString("romaji") }
+                val title = media.getJSONObject("title").optString("english").ifBlank {
+                    media.getJSONObject("title").optString("romaji")
+                }
                 unique[id] = LibraryEntry(
                     id = id,
                     media = MediaSummary(
@@ -43,7 +44,10 @@ class AniListLibraryService @Inject constructor(
                         title = title,
                         coverUrl = media.optJSONObject("coverImage")?.optString("large"),
                         averageScore = media.optInt("averageScore").takeIf { it != 0 },
-                        episodesOrChapters = (if (type == MediaType.MANGA) media.optInt("chapters") else media.optInt("episodes")).takeIf { it != 0 },
+                        episodesOrChapters = (
+                            if (type == MediaType.MANGA) media.optInt("chapters")
+                            else media.optInt("episodes")
+                        ).takeIf { it != 0 },
                     ),
                     status = entry.optString("status", "UNKNOWN"),
                     progress = entry.optInt("progress"),
@@ -51,17 +55,24 @@ class AniListLibraryService @Inject constructor(
                 )
             }
         }
-        unique.values.toList()
+        return@withContext unique.values.toList()
     }
 
     private fun execute(query: String, variables: Map<String, Any?>): JSONObject {
-        val body = JSONObject().put("query", query).put("variables", JSONObject(variables)).toString()
+        val body = JSONObject()
+            .put("query", query)
+            .put("variables", JSONObject(variables))
+            .toString()
             .toRequestBody("application/json".toMediaType())
-        val request = Request.Builder().url("https://graphql.anilist.co").post(body).apply {
-            tokenStore.accessToken()?.let { header("Authorization", "Bearer $it") }
-            header("Accept", "application/json")
-        }.build()
-        client.newCall(request).execute().use { response ->
+        val request = Request.Builder()
+            .url("https://graphql.anilist.co")
+            .post(body)
+            .apply {
+                tokenStore.accessToken()?.let { header("Authorization", "Bearer $it") }
+                header("Accept", "application/json")
+            }
+            .build()
+        return client.newCall(request).execute().use { response ->
             val payload = response.body?.string().orEmpty()
             check(response.isSuccessful) { "AniList library request failed (${response.code})" }
             JSONObject(payload).also { result ->
