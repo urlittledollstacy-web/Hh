@@ -23,9 +23,19 @@ data class MediaDetail(
     val summary: MediaSummary,
     val description: String?,
     val status: String?,
+    val format: String?,
+    val duration: Int?,
+    val startDate: String?,
+    val endDate: String?,
+    val season: String?,
+    val seasonYear: Int?,
     val genres: List<String>,
+    val tags: List<String>,
     val popularity: Int?,
     val favourites: Int?,
+    val bannerUrl: String?,
+    val studios: List<String>,
+    val relations: List<MediaSummary>,
 )
 
 data class AniListUser(val id: Int, val name: String, val avatarUrl: String?, val about: String?)
