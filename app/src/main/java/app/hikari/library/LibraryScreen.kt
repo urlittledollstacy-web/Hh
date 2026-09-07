@@ -26,11 +26,14 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Refresh
+import androidx.compose.material.icons.outlined.Remove
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -51,6 +54,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import app.hikari.core.model.LibraryEntry
 import app.hikari.core.model.MediaType
+import app.hikari.core.model.ScoreFormat
 import app.hikari.data.remote.AniListLibraryService
 import coil3.compose.AsyncImage
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -59,6 +63,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import javax.inject.Inject
+import kotlin.math.roundToInt
 
 @HiltViewModel
 class LibraryViewModel @Inject constructor(private val api: AniListLibraryService) : ViewModel() {
@@ -68,7 +73,13 @@ class LibraryViewModel @Inject constructor(private val api: AniListLibraryServic
     fun load(type: MediaType) = viewModelScope.launch {
         _state.value = _state.value.copy(loading = true, error = null)
         runCatching { api.library(type) }
-            .onSuccess { entries -> _state.value = LibraryUiState(entries = entries, loading = false) }
+            .onSuccess { snapshot ->
+                _state.value = LibraryUiState(
+                    entries = snapshot.entries,
+                    scoreFormat = snapshot.scoreFormat,
+                    loading = false,
+                )
+            }
             .onFailure { error -> _state.value = LibraryUiState(loading = false, error = error.message ?: "Couldn't load your library.") }
     }
 
@@ -86,6 +97,7 @@ class LibraryViewModel @Inject constructor(private val api: AniListLibraryServic
 
 data class LibraryUiState(
     val entries: List<LibraryEntry> = emptyList(),
+    val scoreFormat: ScoreFormat = ScoreFormat.POINT_100,
     val loading: Boolean = false,
     val saving: Boolean = false,
     val error: String? = null,
@@ -141,13 +153,14 @@ fun LibraryScreen(signedIn: Boolean, padding: PaddingValues, vm: LibraryViewMode
         if (!state.loading && state.error == null && filtered.isEmpty()) {
             item { Text(if (status == "ALL") "Your ${type.name.lowercase()} library is empty." else "No titles in ${statusLabel(status, type)}.", color = MaterialTheme.colorScheme.onSurfaceVariant) }
         }
-        items(filtered, key = { it.id }) { entry -> LibraryCard(entry, type) { selected = entry } }
+        items(filtered, key = { it.id }) { entry -> LibraryCard(entry, type, state.scoreFormat) { selected = entry } }
     }
 
     selected?.let { entry ->
         LibraryEditorDialog(
             entry = entry,
             type = type,
+            scoreFormat = state.scoreFormat,
             saving = state.saving,
             onDismiss = { selected = null },
             onSave = { newStatus, progress, score -> vm.save(type, entry, newStatus, progress, score) { selected = null } },
@@ -156,7 +169,7 @@ fun LibraryScreen(signedIn: Boolean, padding: PaddingValues, vm: LibraryViewMode
 }
 
 @Composable
-private fun LibraryCard(entry: LibraryEntry, type: MediaType, onClick: () -> Unit) {
+private fun LibraryCard(entry: LibraryEntry, type: MediaType, scoreFormat: ScoreFormat, onClick: () -> Unit) {
     Card(
         modifier = Modifier.clickable(onClick = onClick),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
@@ -171,7 +184,7 @@ private fun LibraryCard(entry: LibraryEntry, type: MediaType, onClick: () -> Uni
                 Text(statusLabel(entry.status, type), fontSize = 12.sp, color = MaterialTheme.colorScheme.primary)
                 Text(progressLabel(entry, type), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            entry.score?.let { Text("${formatScore(it)} ★", fontWeight = FontWeight.Bold) }
+            entry.score?.let { Text(scoreDisplay(it, scoreFormat), fontWeight = FontWeight.Bold) }
         }
     }
 }
@@ -180,15 +193,18 @@ private fun LibraryCard(entry: LibraryEntry, type: MediaType, onClick: () -> Uni
 private fun LibraryEditorDialog(
     entry: LibraryEntry,
     type: MediaType,
+    scoreFormat: ScoreFormat,
     saving: Boolean,
     onDismiss: () -> Unit,
     onSave: (String, Int, Double) -> Unit,
 ) {
     var selectedStatus by remember(entry.id, entry.status) { mutableStateOf(entry.status) }
-    var progressText by remember(entry.id, entry.progress) { mutableStateOf(entry.progress.toString()) }
-    var scoreText by remember(entry.id, entry.score) { mutableStateOf(entry.score?.let { formatScore(it) } ?: "0") }
-    val progress = progressText.toIntOrNull()?.coerceAtLeast(0) ?: 0
-    val score = scoreText.toDoubleOrNull()?.coerceIn(0.0, 100.0) ?: 0.0
+    var progress by remember(entry.id, entry.progress) { mutableStateOf(entry.progress.toFloat()) }
+    var score by remember(entry.id, entry.score, scoreFormat) { mutableStateOf((entry.score ?: 0.0).toFloat()) }
+    val maxProgress = entry.media.episodesOrChapters?.coerceAtLeast(0) ?: 0
+    val safeProgress = if (maxProgress > 0) progress.coerceIn(0f, maxProgress.toFloat()) else progress.coerceAtLeast(0f)
+    val scoreConfig = scoreConfig(scoreFormat)
+    val safeScore = score.coerceIn(0f, scoreConfig.max)
 
     AlertDialog(
         onDismissRequest = { if (!saving) onDismiss() },
@@ -201,17 +217,68 @@ private fun LibraryEditorDialog(
                 Text(if (type == MediaType.ANIME) "Anime tracking" else "Manga tracking", color = MaterialTheme.colorScheme.primary)
                 Text("Status", fontWeight = FontWeight.SemiBold)
                 ChoiceRow(statusOptions(type), selectedStatus) { selectedStatus = it }
-                OutlinedTextField(value = progressText, onValueChange = { progressText = it.filter(Char::isDigit) }, label = { Text(if (type == MediaType.ANIME) "Episodes watched" else "Chapters read") }, singleLine = true)
-                OutlinedTextField(value = scoreText, onValueChange = { scoreText = it.filter { char -> char.isDigit() || char == '.' } }, label = { Text("Your score (0-100)") }, singleLine = true)
+                Text(progressLabel(type), fontWeight = FontWeight.SemiBold)
+                if (maxProgress > 0) {
+                    Slider(
+                        value = safeProgress,
+                        onValueChange = { progress = it.roundToInt().toFloat() },
+                        valueRange = 0f..maxProgress.toFloat(),
+                        steps = (maxProgress - 1).coerceAtLeast(0),
+                    )
+                } else {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center, modifier = Modifier.fillMaxWidth()) {
+                        IconButton(onClick = { progress = (safeProgress - 1f).coerceAtLeast(0f) }) { Icon(Icons.Outlined.Remove, "Decrease progress") }
+                        Text(safeProgress.roundToInt().toString(), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 16.dp))
+                        IconButton(onClick = { progress += 1f }) { Icon(Icons.Outlined.Add, "Increase progress") }
+                    }
+                }
+                Text("${safeProgress.roundToInt()} ${if (type == MediaType.ANIME) "episodes" else "chapters"}${maxProgress.takeIf { it > 0 }?.let { " / $it" } ?: ""}", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
+                Text("Your score", fontWeight = FontWeight.SemiBold)
+                Slider(
+                    value = safeScore,
+                    onValueChange = { score = snapScore(it, scoreFormat) },
+                    valueRange = 0f..scoreConfig.max,
+                    steps = scoreConfig.steps,
+                )
+                Text(scoreDisplay(safeScore.toDouble(), scoreFormat), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.align(Alignment.CenterHorizontally))
+                Text(scoreConfig.helper, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp, modifier = Modifier.align(Alignment.CenterHorizontally))
             }
         },
         confirmButton = {
-            Button(onClick = { onSave(selectedStatus, progress, score) }, enabled = !saving) {
+            Button(onClick = { onSave(selectedStatus, safeProgress.roundToInt(), safeScore.toDouble()) }, enabled = !saving) {
                 if (saving) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp) else Text("Save to AniList")
             }
         },
         dismissButton = { TextButton(onClick = onDismiss, enabled = !saving) { Text("Cancel") } },
     )
+}
+
+private data class ScoreConfig(val max: Float, val steps: Int, val helper: String)
+
+private fun scoreConfig(format: ScoreFormat): ScoreConfig = when (format) {
+    ScoreFormat.POINT_100 -> ScoreConfig(100f, 99, "100 point · drag to choose")
+    ScoreFormat.POINT_10_DECIMAL -> ScoreConfig(10f, 19, "10 point decimal · 0.5 steps")
+    ScoreFormat.POINT_10 -> ScoreConfig(10f, 9, "10 point · whole numbers")
+    ScoreFormat.POINT_5 -> ScoreConfig(5f, 4, "5 star · AniList setting")
+    ScoreFormat.POINT_3 -> ScoreConfig(3f, 2, "3 point smiley · AniList setting")
+}
+
+private fun snapScore(value: Float, format: ScoreFormat): Float = when (format) {
+    ScoreFormat.POINT_10_DECIMAL -> (value * 2f).roundToInt() / 2f
+    else -> value.roundToInt().toFloat()
+}
+
+private fun scoreDisplay(score: Double, format: ScoreFormat): String = when (format) {
+    ScoreFormat.POINT_100 -> "${formatScore(score)} / 100"
+    ScoreFormat.POINT_10_DECIMAL -> "${"%.1f".format(score)} / 10"
+    ScoreFormat.POINT_10 -> "${formatScore(score)} / 10"
+    ScoreFormat.POINT_5 -> "${"★".repeat(score.roundToInt())}${"☆".repeat((5 - score.roundToInt()).coerceAtLeast(0))}  ${score.roundToInt()} / 5"
+    ScoreFormat.POINT_3 -> when (score.roundToInt()) {
+        1 -> ":(  1 / 3"
+        2 -> ":|  2 / 3"
+        3 -> ":)  3 / 3"
+        else -> "Not rated"
+    }
 }
 
 @Composable
@@ -254,5 +321,7 @@ private fun progressLabel(entry: LibraryEntry, type: MediaType): String = when (
     MediaType.ANIME -> "${entry.progress} episodes${entry.media.episodesOrChapters?.let { " / $it" } ?: ""}"
     MediaType.MANGA -> "${entry.progress} chapters${entry.media.episodesOrChapters?.let { " / $it" } ?: ""}"
 }
+
+private fun progressLabel(type: MediaType): String = if (type == MediaType.ANIME) "Episodes watched" else "Chapters read"
 
 private fun formatScore(score: Double): String = if (score % 1.0 == 0.0) score.toInt().toString() else "%.1f".format(score)
