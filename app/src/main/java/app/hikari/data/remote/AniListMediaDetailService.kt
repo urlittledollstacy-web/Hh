@@ -1,8 +1,10 @@
 package app.hikari.data.remote
 
 import app.hikari.core.auth.SecureTokenStore
+import app.hikari.core.model.MediaCharacter
 import app.hikari.core.model.MediaDetail
 import app.hikari.core.model.MediaRelation
+import app.hikari.core.model.MediaStaff
 import app.hikari.core.model.MediaSummary
 import app.hikari.core.model.MediaType
 import kotlinx.coroutines.Dispatchers
@@ -34,20 +36,15 @@ class AniListMediaDetailService @Inject constructor(
                 popularity favourites
                 studios{nodes{name}}
                 relations{edges{relationType node{id type title{userPreferred romaji english native} coverImage{large} averageScore episodes chapters}}}
+                characters(page:1,perPage:12){edges{role node{id name{full} image{large}} voiceActors{id name{full} image{large}}}}
+                staff(page:1,perPage:12){edges{role node{id name{full} image{large} primaryOccupations}}}
               }
             }
         """.trimIndent()
         val media = execute(query, mapOf("id" to id))
             .getJSONObject("data").getJSONObject("Media")
         val type = MediaType.valueOf(media.getString("type"))
-        val summary = MediaSummary(
-            id = media.getInt("id"),
-            type = type,
-            title = preferredTitle(media.getJSONObject("title")),
-            coverUrl = media.optJSONObject("coverImage")?.optString("large"),
-            averageScore = media.optInt("averageScore").takeIf { it != 0 },
-            episodesOrChapters = (if (type == MediaType.ANIME) media.optInt("episodes") else media.optInt("chapters")).takeIf { it != 0 },
-        )
+        val summary = mediaSummary(media, type)
         val start = formatDate(media.optJSONObject("startDate"))
         val end = formatDate(media.optJSONObject("endDate"))
         val tags = media.optJSONArray("tags")?.let { array ->
@@ -62,19 +59,41 @@ class AniListMediaDetailService @Inject constructor(
             List(array.length()) { i ->
                 val edge = array.getJSONObject(i)
                 edge.optJSONObject("node")?.let { node ->
-                    val nodeType = MediaType.valueOf(node.getString("type"))
                     MediaRelation(
                         relationType = edge.optString("relationType").replace('_', ' '),
-                        media = MediaSummary(
-                            id = node.getInt("id"), type = nodeType,
-                            title = preferredTitle(node.getJSONObject("title")),
-                            coverUrl = node.optJSONObject("coverImage")?.optString("large"),
-                            averageScore = node.optInt("averageScore").takeIf { it != 0 },
-                            episodesOrChapters = (if (nodeType == MediaType.ANIME) node.optInt("episodes") else node.optInt("chapters")).takeIf { it != 0 },
-                        ),
+                        media = mediaSummary(node, MediaType.valueOf(node.getString("type"))),
                     )
                 }
             }.filterNotNull()
+        } ?: emptyList()
+        val characters = media.optJSONObject("characters")?.optJSONArray("edges")?.let { array ->
+            List(array.length()) { i ->
+                val edge = array.getJSONObject(i)
+                val node = edge.optJSONObject("node") ?: return@List null
+                val actor = edge.optJSONArray("voiceActors")?.optJSONObject(0)
+                MediaCharacter(
+                    id = node.optInt("id"),
+                    name = node.optJSONObject("name")?.optString("full").orEmpty().ifBlank { "Unknown character" },
+                    imageUrl = node.optJSONObject("image")?.optString("large")?.takeIf { it.isNotBlank() },
+                    role = edge.optionalText("role")?.replace('_', ' ')?.lowercase()?.replaceFirstChar { it.uppercase() } ?: "Character",
+                    voiceActorName = actor?.optJSONObject("name")?.optString("full")?.takeIf { it.isNotBlank() },
+                    voiceActorImageUrl = actor?.optJSONObject("image")?.optString("large")?.takeIf { it.isNotBlank() },
+                )
+            }.filterNotNull()
+        } ?: emptyList()
+        val staff = media.optJSONObject("staff")?.optJSONArray("edges")?.let { array ->
+            List(array.length()) { i ->
+                val edge = array.getJSONObject(i)
+                val node = edge.optJSONObject("node") ?: return@List null
+                val occupations = node.optJSONArray("primaryOccupations")?.toStringList().orEmpty()
+                val edgeRole = edge.optionalText("role")?.takeIf { it.isNotBlank() }
+                MediaStaff(
+                    id = node.optInt("id"),
+                    name = node.optJSONObject("name")?.optString("full").orEmpty().ifBlank { "Unknown staff" },
+                    imageUrl = node.optJSONObject("image")?.optString("large")?.takeIf { it.isNotBlank() },
+                    roles = listOfNotNull(edgeRole) + occupations,
+                )
+            }.filterNotNull().map { it.copy(roles = it.roles.distinct().take(3)) }
         } ?: emptyList()
         MediaDetail(
             summary = summary,
@@ -93,8 +112,19 @@ class AniListMediaDetailService @Inject constructor(
             bannerUrl = media.optionalText("bannerImage"),
             studios = studios,
             relations = relations,
+            characters = characters,
+            staff = staff,
         )
     }
+
+    private fun mediaSummary(media: JSONObject, type: MediaType): MediaSummary = MediaSummary(
+        id = media.getInt("id"),
+        type = type,
+        title = preferredTitle(media.getJSONObject("title")),
+        coverUrl = media.optJSONObject("coverImage")?.optString("large")?.takeIf { it.isNotBlank() },
+        averageScore = media.optInt("averageScore").takeIf { it != 0 },
+        episodesOrChapters = (if (type == MediaType.ANIME) media.optInt("episodes") else media.optInt("chapters")).takeIf { it != 0 },
+    )
 
     private suspend fun execute(query: String, variables: Map<String, Any?>): JSONObject {
         val body = JSONObject().put("query", query).put("variables", JSONObject(variables)).toString()
