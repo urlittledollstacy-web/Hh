@@ -18,9 +18,14 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ArrowBack
+import androidx.compose.material.icons.outlined.AutoAwesome
+import androidx.compose.material.icons.outlined.BookmarkAdd
+import androidx.compose.material.icons.outlined.CalendarToday
+import androidx.compose.material.icons.outlined.Star
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -30,6 +35,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -48,8 +54,10 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import app.hikari.core.model.LibraryEntry
+import app.hikari.core.model.MediaCharacter
 import app.hikari.core.model.MediaDetail
 import app.hikari.core.model.MediaRelation
+import app.hikari.core.model.MediaStaff
 import app.hikari.core.model.MediaSummary
 import app.hikari.core.model.ScoreFormat
 import app.hikari.data.remote.AniListLibraryService
@@ -120,9 +128,7 @@ class MediaTrackingViewModel @Inject constructor(
         }
     }
 
-    fun dismiss() {
-        _state.value = MediaTrackingState.Hidden
-    }
+    fun dismiss() { _state.value = MediaTrackingState.Hidden }
 
     fun save(entry: LibraryEntry, status: String, progress: Int, score: Double) {
         val current = _state.value as? MediaTrackingState.Ready ?: return
@@ -157,9 +163,7 @@ fun MediaDetailsScreen(
         if (history.isNotEmpty()) {
             currentSummary = history.last()
             history = history.dropLast(1)
-        } else {
-            onBack()
-        }
+        } else onBack()
     }
     val openRelation: (MediaSummary) -> Unit = { relation ->
         history = history + currentSummary
@@ -169,7 +173,7 @@ fun MediaDetailsScreen(
     when (val current = state) {
         MediaDetailState.Loading -> DetailLoading { goBack() }
         is MediaDetailState.Error -> DetailError(current.message, { goBack() }) { vm.load(currentSummary.id) }
-        is MediaDetailState.Ready -> DetailContent(current.media, { goBack() }, { relation -> openRelation(relation) }) { trackingVm.open(it) }
+        is MediaDetailState.Ready -> DetailContent(current.media, { goBack() }, openRelation) { trackingVm.open(it) }
     }
 
     when (val tracking = trackingState) {
@@ -205,7 +209,7 @@ private fun TrackingErrorDialog(message: String, onDismiss: () -> Unit, onRetry:
         title = { Text("AniList tracking") },
         text = { Text(message, color = MaterialTheme.colorScheme.onSurfaceVariant) },
         confirmButton = { Button(onClick = onRetry) { Text("Retry") } },
-        dismissButton = { androidx.compose.material3.TextButton(onClick = onDismiss) { Text("Cancel") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
 }
 
@@ -230,70 +234,192 @@ private fun DetailError(message: String, onBack: () -> Unit, onRetry: () -> Unit
 }
 
 @Composable
-private fun DetailContent(media: MediaDetail, onBack: () -> Unit, onOpenRelation: (MediaSummary) -> Unit, onOpenTracking: (MediaSummary) -> Unit) {
-    LazyColumn(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background), contentPadding = PaddingValues(bottom = 32.dp)) {
+private fun DetailContent(
+    media: MediaDetail,
+    onBack: () -> Unit,
+    onOpenRelation: (MediaSummary) -> Unit,
+    onOpenTracking: (MediaSummary) -> Unit,
+) {
+    LazyColumn(
+        Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background),
+        contentPadding = PaddingValues(bottom = 36.dp),
+    ) {
         item {
             Box(Modifier.fillMaxWidth().aspectRatio(3f).background(MaterialTheme.colorScheme.surfaceVariant)) {
                 media.bannerUrl?.let { AsyncImage(model = it, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
-                IconButton(onClick = onBack, modifier = Modifier.padding(12.dp).align(Alignment.TopStart).background(MaterialTheme.colorScheme.surface.copy(alpha = .85f), RoundedCornerShape(50))) { Icon(Icons.Outlined.ArrowBack, "Back") }
+                IconButton(
+                    onClick = onBack,
+                    modifier = Modifier.padding(12.dp).align(Alignment.TopStart).background(MaterialTheme.colorScheme.surface.copy(alpha = .86f), RoundedCornerShape(50)),
+                ) { Icon(Icons.Outlined.ArrowBack, "Back") }
             }
         }
-        item {
-            Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(top = 12.dp), verticalAlignment = Alignment.Bottom) {
-                Box(Modifier.width(126.dp).aspectRatio(.7f).clip(RoundedCornerShape(16.dp)).background(MaterialTheme.colorScheme.surfaceVariant)) {
-                    media.summary.coverUrl?.let { AsyncImage(model = it, contentDescription = media.summary.title, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
-                }
-                Spacer(Modifier.width(16.dp))
-                Column(Modifier.weight(1f).padding(bottom = 6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text(media.summary.title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, maxLines = 4, overflow = TextOverflow.Ellipsis)
-                    Text(if (media.summary.type.name == "ANIME") "Anime" else "Manga", color = MaterialTheme.colorScheme.primary)
-                    media.summary.averageScore?.let { Text("★ $it%", fontWeight = FontWeight.SemiBold) }
-                }
-            }
+        item { MediaIdentity(media, onOpenTracking) }
+        item { InfoStrip(media) }
+        media.description?.takeIf { it.isNotBlank() }?.let { description ->
+            item { DetailSection("The story") { Text(description, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyLarge) } }
         }
-        item { Button(onClick = { onOpenTracking(media.summary) }, modifier = Modifier.fillMaxWidth().padding(20.dp)) { Text("Add to List") } }
-        item { InfoGrid(media) }
-        media.description?.takeIf { it.isNotBlank() }?.let { description -> item { DetailSection("Description") { Text(description, color = MaterialTheme.colorScheme.onSurfaceVariant) } } }
         if (media.genres.isNotEmpty()) item { DetailSection("Genres") { TagRow(media.genres) } }
-        if (media.tags.isNotEmpty()) item { DetailSection("Tags") { TagRow(media.tags.take(12)) } }
-        if (media.studios.isNotEmpty()) item { DetailSection("Studios") { Text(media.studios.joinToString(" • ")) } }
+        if (media.tags.isNotEmpty()) item { DetailSection("Themes & tags") { TagRow(media.tags.take(16)) } }
+        if (media.characters.isNotEmpty()) item { CastSection(media.characters) }
+        if (media.staff.isNotEmpty()) item { StaffSection(media.staff) }
+        if (media.studios.isNotEmpty()) item { DetailSection("Production") { ProductionBlock(media.studios) } }
         if (media.relations.isNotEmpty()) {
-            item { DetailSection("Relations") { Text("Connected anime and manga", color = MaterialTheme.colorScheme.onSurfaceVariant) } }
-            items(media.relations.take(12), key = { it.media.id }) { relation -> RelationCard(relation, onOpenRelation) }
+            item { DetailSection("Universe") { Text("Connected stories and editions", color = MaterialTheme.colorScheme.onSurfaceVariant) } }
+            items(media.relations.take(12), key = { "relation-${it.relationType}-${it.media.id}" }) { relation -> RelationCard(relation, onOpenRelation) }
         }
     }
 }
 
 @Composable
-private fun InfoGrid(media: MediaDetail) {
-    Card(Modifier.fillMaxWidth().padding(horizontal = 20.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
-            media.format?.let { InfoLine("Format", it) }
-            media.status?.let { InfoLine("Status", it) }
-            media.summary.episodesOrChapters?.let { InfoLine(if (media.summary.type.name == "ANIME") "Episodes" else "Chapters", it.toString()) }
-            media.duration?.let { InfoLine("Duration", "$it min") }
-            media.seasonYear?.let { InfoLine("Season", listOfNotNull(media.season, it.toString()).joinToString(" ")) }
-            media.startDate?.let { InfoLine("Started", it) }
-            media.endDate?.let { InfoLine("Ended", it) }
-            media.popularity?.let { InfoLine("Popularity", it.toString()) }
-            media.favourites?.let { InfoLine("Favorites", it.toString()) }
+private fun MediaIdentity(media: MediaDetail, onOpenTracking: (MediaSummary) -> Unit) {
+    Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(top = 12.dp), verticalAlignment = Alignment.Bottom) {
+        Box(Modifier.width(126.dp).aspectRatio(.7f).clip(RoundedCornerShape(18.dp)).background(MaterialTheme.colorScheme.surfaceVariant)) {
+            media.summary.coverUrl?.let { AsyncImage(model = it, contentDescription = media.summary.title, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
+        }
+        Spacer(Modifier.width(16.dp))
+        Column(Modifier.weight(1f).padding(bottom = 6.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+            Text(media.summary.title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, maxLines = 4, overflow = TextOverflow.Ellipsis)
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                MetaPill(if (media.summary.type.name == "ANIME") "ANIME" else "MANGA", true)
+                media.status?.let { MetaPill(it.replace('_', ' ').uppercase(), false) }
+            }
+            media.summary.averageScore?.let { score ->
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Icon(Icons.Outlined.Star, null, Modifier.size(17.dp), tint = MaterialTheme.colorScheme.primary)
+                    Text("${score / 10f}", fontWeight = FontWeight.Bold)
+                    Text("/ 10", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
+                }
+            }
+        }
+    }
+    Button(
+        onClick = { onOpenTracking(media.summary) },
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 14.dp),
+        shape = RoundedCornerShape(16.dp),
+    ) {
+        Icon(Icons.Outlined.BookmarkAdd, null, Modifier.size(19.dp))
+        Spacer(Modifier.width(8.dp))
+        Text("Track on AniList")
+    }
+}
+
+@Composable
+private fun InfoStrip(media: MediaDetail) {
+    LazyRow(contentPadding = PaddingValues(horizontal = 20.dp), horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+        media.format?.let { item { StatPill("FORMAT", it.replace('_', ' ')) } }
+        media.summary.episodesOrChapters?.let { value -> item { StatPill(if (media.summary.type.name == "ANIME") "EPISODES" else "CHAPTERS", value.toString()) } }
+        media.duration?.let { item { StatPill("RUNTIME", "${it}m") } }
+        media.seasonYear?.let { year -> item { StatPill("SEASON", listOfNotNull(media.season, year.toString()).joinToString(" ")) } }
+        media.startDate?.let { item { StatPill("STARTED", it) } }
+        media.endDate?.let { item { StatPill("ENDED", it) } }
+        media.popularity?.let { item { StatPill("POPULARITY", compactNumber(it)) } }
+        media.favourites?.let { item { StatPill("FAVORITES", compactNumber(it)) } }
+    }
+}
+
+@Composable
+private fun StatPill(label: String, value: String) {
+    Column(Modifier.clip(RoundedCornerShape(14.dp)).background(MaterialTheme.colorScheme.surfaceVariant).padding(horizontal = 12.dp, vertical = 9.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+        Text(value, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+    }
+}
+
+@Composable
+private fun MetaPill(text: String, accent: Boolean) {
+    Text(text, Modifier.clip(RoundedCornerShape(8.dp)).background(if (accent) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant).padding(horizontal = 7.dp, vertical = 4.dp), style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = if (accent) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant)
+}
+
+@Composable
+private fun CastSection(characters: List<MediaCharacter>) {
+    DetailSection("Cast") {
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            items(characters, key = { it.id }) { character ->
+                Column(Modifier.width(132.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                    Box(Modifier.fillMaxWidth().height(178.dp).clip(RoundedCornerShape(18.dp)).background(MaterialTheme.colorScheme.surfaceVariant)) {
+                        character.imageUrl?.let { AsyncImage(model = it, contentDescription = character.name, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
+                        Box(Modifier.align(Alignment.BottomStart).fillMaxWidth().background(MaterialTheme.colorScheme.surface.copy(alpha = .82f)).padding(8.dp)) {
+                            Text(character.role, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                        }
+                    }
+                    Text(character.name, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    character.voiceActorName?.let { Text("VA · $it", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis) }
+                }
+            }
         }
     }
 }
 
-@Composable private fun InfoLine(label: String, value: String) { Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text(label, color = MaterialTheme.colorScheme.onSurfaceVariant); Text(value, fontWeight = FontWeight.Medium) } }
-@Composable private fun DetailSection(title: String, content: @Composable () -> Unit) { Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) { Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold); content() } }
-@Composable private fun TagRow(tags: List<String>) { LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) { items(tags) { tag -> Text(tag, Modifier.clip(RoundedCornerShape(50)).background(MaterialTheme.colorScheme.surfaceVariant).padding(horizontal = 10.dp, vertical = 6.dp), fontSize = MaterialTheme.typography.labelMedium.fontSize, maxLines = 1, overflow = TextOverflow.Clip) } } }
+@Composable
+private fun StaffSection(staff: List<MediaStaff>) {
+    DetailSection("Key staff") {
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            items(staff, key = { it.id }) { person ->
+                Column(Modifier.width(118.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                    Box(Modifier.size(92.dp).clip(CircleShape).background(MaterialTheme.colorScheme.surfaceVariant)) {
+                        person.imageUrl?.let { AsyncImage(model = it, contentDescription = person.name, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
+                    }
+                    Text(person.name, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    Text(person.roles.joinToString(" • "), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ProductionBlock(studios: List<String>) {
+    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant), shape = RoundedCornerShape(18.dp)) {
+        Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(38.dp).clip(RoundedCornerShape(11.dp)).background(MaterialTheme.colorScheme.primaryContainer), contentAlignment = Alignment.Center) {
+                Icon(Icons.Outlined.AutoAwesome, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onPrimaryContainer)
+            }
+            Spacer(Modifier.width(12.dp))
+            Column {
+                Text("Studios", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                Text(studios.joinToString(" • "), fontWeight = FontWeight.SemiBold)
+            }
+        }
+    }
+}
+
+@Composable
+private fun DetailSection(title: String, content: @Composable () -> Unit) {
+    Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+        content()
+    }
+}
+
+@Composable
+private fun TagRow(tags: List<String>) {
+    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        items(tags) { tag ->
+            Text(tag, Modifier.clip(RoundedCornerShape(50)).background(MaterialTheme.colorScheme.surfaceVariant).padding(horizontal = 10.dp, vertical = 7.dp), style = MaterialTheme.typography.labelMedium, maxLines = 1)
+        }
+    }
+}
 
 @Composable
 private fun RelationCard(relation: MediaRelation, onOpenRelation: (MediaSummary) -> Unit) {
-    Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 5.dp).clip(RoundedCornerShape(14.dp)).background(MaterialTheme.colorScheme.surfaceVariant).clickable { onOpenRelation(relation.media) }.padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.size(54.dp).clip(RoundedCornerShape(9.dp)).background(MaterialTheme.colorScheme.surface)) { relation.media.coverUrl?.let { AsyncImage(model = it, contentDescription = relation.media.title, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop) } }
-        Spacer(Modifier.width(10.dp))
-        Column(Modifier.weight(1f)) {
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 5.dp).clip(RoundedCornerShape(16.dp)).background(MaterialTheme.colorScheme.surfaceVariant).clickable { onOpenRelation(relation.media) }.padding(9.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(Modifier.size(58.dp).clip(RoundedCornerShape(11.dp)).background(MaterialTheme.colorScheme.surface)) {
+            relation.media.coverUrl?.let { AsyncImage(model = it, contentDescription = relation.media.title, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
+        }
+        Spacer(Modifier.width(11.dp))
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(relation.relationType.uppercase(), color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
             Text(relation.media.title, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            Text(if (relation.media.type.name == "ANIME") "Anime" else "Manga", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(if (relation.media.type.name == "ANIME") "Anime" else "Manga", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelSmall)
         }
     }
+}
+
+private fun compactNumber(value: Int): String = when {
+    value >= 1_000_000 -> "${value / 1_000_000}.${(value / 100_000) % 10}M"
+    value >= 1_000 -> "${value / 1_000}.${(value / 100) % 10}K"
+    else -> value.toString()
 }
