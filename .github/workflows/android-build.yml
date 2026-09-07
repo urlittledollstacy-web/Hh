@@ -60,7 +60,9 @@ jobs:
           ls -la app
 
       - name: Build debug APK
-        run: gradle :app:assembleDebug --no-daemon --stacktrace --info
+        env:
+          ANILIST_CLIENT_ID: ${{ secrets.ANILIST_CLIENT_ID }}
+        run: gradle :app:assembleDebug --no-daemon --stacktrace --info -PANILIST_CLIENT_ID="$ANILIST_CLIENT_ID"
 
       - name: Upload debug APK
         if: always()
