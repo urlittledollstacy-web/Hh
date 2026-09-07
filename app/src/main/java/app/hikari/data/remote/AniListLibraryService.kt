@@ -6,6 +6,7 @@ import app.hikari.core.model.MediaSummary
 import app.hikari.core.model.MediaType
 import app.hikari.core.model.ScoreFormat
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -89,7 +90,7 @@ class AniListLibraryService @Inject constructor(
         else -> ScoreFormat.POINT_100
     }
 
-    private fun execute(query: String, variables: Map<String, Any?>): JSONObject {
+    private suspend fun execute(query: String, variables: Map<String, Any?>): JSONObject {
         val body = JSONObject().put("query", query).put("variables", JSONObject(variables)).toString()
             .toRequestBody("application/json".toMediaType())
         val request = Request.Builder()
@@ -100,12 +101,46 @@ class AniListLibraryService @Inject constructor(
                 header("Accept", "application/json")
             }
             .build()
-        return client.newCall(request).execute().use { response ->
+
+        var attempt = 0
+        while (true) {
+            val response = client.newCall(request).execute()
             val payload = response.body?.string().orEmpty()
-            check(response.isSuccessful) { "AniList library request failed (${response.code})" }
-            JSONObject(payload).also { result ->
-                check(!result.has("errors")) { result.getJSONArray("errors").toString() }
+            val retryAfter = response.header("Retry-After")?.toLongOrNull()?.coerceIn(1L, 60L)
+            val statusCode = response.code
+            response.close()
+
+            if (statusCode == 429 && attempt == 0 && retryAfter != null) {
+                attempt++
+                delay(retryAfter * 1_000L)
+                continue
             }
+
+            if (!statusCode.let { it in 200..299 }) {
+                throw IllegalStateException(
+                    graphQlError(payload) ?: "AniList library request failed ($statusCode)",
+                )
+            }
+
+            val result = runCatching { JSONObject(payload) }
+                .getOrElse { throw IllegalStateException("AniList returned an invalid response.") }
+            graphQlError(result)?.let { throw IllegalStateException(it) }
+            return result
         }
+    }
+}
+
+private fun graphQlError(payload: String): String? = runCatching { graphQlError(JSONObject(payload)) }.getOrNull()
+
+private fun graphQlError(result: JSONObject): String? {
+    val errors = result.optJSONArray("errors") ?: return null
+    val first = errors.optJSONObject(0) ?: return "AniList returned a GraphQL error."
+    val message = first.optString("message").takeIf { it.isNotBlank() }
+    val status = first.optInt("status").takeIf { it != 0 }
+    return when {
+        message != null && status != null -> "$message (HTTP $status)"
+        message != null -> message
+        status != null -> "AniList returned an error (HTTP $status)."
+        else -> "AniList returned a GraphQL error."
     }
 }
