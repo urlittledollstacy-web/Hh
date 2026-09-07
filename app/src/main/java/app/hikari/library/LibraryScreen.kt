@@ -11,7 +11,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -48,7 +47,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import app.hikari.core.model.LibraryEntry
 import app.hikari.core.model.MediaType
-import app.hikari.data.remote.AniListGraphQlService
+import app.hikari.data.remote.AniListLibraryService
 import coil3.compose.AsyncImage
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -58,7 +57,7 @@ import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 @HiltViewModel
-class LibraryViewModel @Inject constructor(private val api: AniListGraphQlService) : ViewModel() {
+class LibraryViewModel @Inject constructor(private val api: AniListLibraryService) : ViewModel() {
     private val _state = MutableStateFlow(LibraryUiState())
     val state: StateFlow<LibraryUiState> = _state.asStateFlow()
 
@@ -87,10 +86,7 @@ fun LibraryScreen(signedIn: Boolean, padding: PaddingValues, vm: LibraryViewMode
     }
 
     if (!signedIn) {
-        Column(
-            Modifier.fillMaxSize().padding(24.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
+        Column(Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("Library", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
             Text("Connect AniList to sync your anime and manga lists in real time.", color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
@@ -111,8 +107,7 @@ fun LibraryScreen(signedIn: Boolean, padding: PaddingValues, vm: LibraryViewMode
                     Text("Synced from AniList", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 IconButton(onClick = { vm.load(type) }, enabled = !state.loading) {
-                    if (state.loading) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-                    else Icon(Icons.Outlined.Refresh, "Refresh library")
+                    if (state.loading) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp) else Icon(Icons.Outlined.Refresh, "Refresh library")
                 }
             }
         }
@@ -156,12 +151,9 @@ private fun ChoiceRow(options: List<String>, selected: String, onSelect: (String
     androidx.compose.foundation.lazy.LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         items(options) { option ->
             val active = option == selected
-            Box(
-                Modifier.clip(RoundedCornerShape(18.dp))
-                    .background(if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant)
-                    .clickable { onSelect(option) }
-                    .padding(horizontal = 14.dp, vertical = 9.dp)
-            ) { Text(optionLabel(option), color = if (active) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface, fontSize = 12.sp) }
+            Box(Modifier.clip(RoundedCornerShape(18.dp)).background(if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant).clickable { onSelect(option) }.padding(horizontal = 14.dp, vertical = 9.dp)) {
+                Text(optionLabel(option), color = if (active) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface, fontSize = 12.sp)
+            }
         }
     }
 }
