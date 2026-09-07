@@ -1,5 +1,7 @@
 package app.hikari.media
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -31,6 +33,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.hikari.core.model.LibraryEntry
@@ -63,44 +66,25 @@ fun MediaTrackingDialog(
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 entry.media.coverUrl?.let {
-                    AsyncImage(
-                        model = it,
-                        contentDescription = entry.media.title,
-                        modifier = Modifier.fillMaxWidth().size(170.dp).clip(RoundedCornerShape(14.dp)),
-                        contentScale = ContentScale.Fit,
-                    )
+                    AsyncImage(model = it, contentDescription = entry.media.title, modifier = Modifier.fillMaxWidth().size(170.dp).clip(RoundedCornerShape(14.dp)), contentScale = ContentScale.Fit)
                 }
                 Text(if (type == MediaType.ANIME) "Anime tracking" else "Manga tracking", color = MaterialTheme.colorScheme.primary)
-                Text("Status", fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold)
-                ChoiceRow(statusOptions(type), selectedStatus) { selectedStatus = it }
-                Text(if (type == MediaType.ANIME) "Episodes watched" else "Chapters read", fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold)
+                Text("Status", fontWeight = FontWeight.SemiBold)
+                ChoiceRow(selectedStatus) { selectedStatus = it }
+                Text(if (type == MediaType.ANIME) "Episodes watched" else "Chapters read", fontWeight = FontWeight.SemiBold)
                 if (maxProgress > 0) {
-                    Slider(
-                        value = safeProgress,
-                        onValueChange = { progress = it.roundToInt().toFloat() },
-                        valueRange = 0f..maxProgress.toFloat(),
-                        steps = (maxProgress - 1).coerceAtLeast(0),
-                    )
+                    Slider(value = safeProgress, onValueChange = { progress = it.roundToInt().toFloat() }, valueRange = 0f..maxProgress.toFloat(), steps = (maxProgress - 1).coerceAtLeast(0))
                 } else {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center, modifier = Modifier.fillMaxWidth()) {
                         IconButton(onClick = { progress = (safeProgress - 1f).coerceAtLeast(0f) }) { Icon(Icons.Outlined.Remove, "Decrease progress") }
-                        Text(safeProgress.roundToInt().toString(), style = MaterialTheme.typography.titleLarge, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold, modifier = Modifier.padding(horizontal = 16.dp))
+                        Text(safeProgress.roundToInt().toString(), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 16.dp))
                         IconButton(onClick = { progress += 1f }) { Icon(Icons.Outlined.Add, "Increase progress") }
                     }
                 }
-                Text(
-                    "${safeProgress.roundToInt()} ${if (type == MediaType.ANIME) "episodes" else "chapters"}${maxProgress.takeIf { it > 0 }?.let { " / $it" } ?: ""}",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    fontSize = 12.sp,
-                )
-                Text("Your score", fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold)
-                Slider(
-                    value = safeScore,
-                    onValueChange = { score = snapScore(it, scoreFormat) },
-                    valueRange = 0f..scoreConfig.max,
-                    steps = scoreConfig.steps,
-                )
-                Text(scoreDisplay(safeScore.toDouble(), scoreFormat), style = MaterialTheme.typography.titleMedium, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold, modifier = Modifier.align(Alignment.CenterHorizontally))
+                Text("${safeProgress.roundToInt()} ${if (type == MediaType.ANIME) "episodes" else "chapters"}${maxProgress.takeIf { it > 0 }?.let { " / $it" } ?: ""}", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
+                Text("Your score", fontWeight = FontWeight.SemiBold)
+                Slider(value = safeScore, onValueChange = { score = snapScore(it, scoreFormat) }, valueRange = 0f..scoreConfig.max, steps = scoreConfig.steps)
+                Text(scoreDisplay(safeScore.toDouble(), scoreFormat), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.align(Alignment.CenterHorizontally))
                 Text(scoreConfig.helper, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp, modifier = Modifier.align(Alignment.CenterHorizontally))
                 error?.let { Text(it, color = MaterialTheme.colorScheme.error, fontSize = 12.sp) }
             }
@@ -115,23 +99,17 @@ fun MediaTrackingDialog(
 }
 
 @Composable
-private fun ChoiceRow(options: List<String>, selected: String, onSelect: (String) -> Unit) {
+private fun ChoiceRow(selected: String, onSelect: (String) -> Unit) {
+    val options = listOf("CURRENT", "PLANNING", "COMPLETED", "REPEATING", "PAUSED", "DROPPED")
     LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         items(options) { option ->
             val active = option == selected
-            Box(
-                Modifier.clip(RoundedCornerShape(18.dp))
-                    .background(if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant)
-                    .clickable { onSelect(option) }
-                    .padding(horizontal = 14.dp, vertical = 9.dp),
-            ) {
+            Box(Modifier.clip(RoundedCornerShape(18.dp)).background(if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant).clickable { onSelect(option) }.padding(horizontal = 14.dp, vertical = 9.dp)) {
                 Text(optionLabel(option), color = if (active) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface, fontSize = 12.sp)
             }
         }
     }
 }
-
-private fun statusOptions(type: MediaType): List<String> = listOf("CURRENT", "PLANNING", "COMPLETED", "REPEATING", "PAUSED", "DROPPED")
 
 private fun optionLabel(value: String): String = when (value) {
     "CURRENT" -> "Watching"
@@ -172,5 +150,3 @@ private fun scoreDisplay(score: Double, format: ScoreFormat): String = when (for
 }
 
 private fun formatScore(score: Double): String = if (score % 1.0 == 0.0) score.toInt().toString() else String.format("%.1f", score)
-
-private fun androidx.compose.foundation.layout.ColumnScope.ignore() = Unit
