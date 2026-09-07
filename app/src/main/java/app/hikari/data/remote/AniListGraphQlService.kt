@@ -16,6 +16,10 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /** Thin AniList GraphQL transport used by the first real-data UI slice. */
+enum class SearchTaxonomyKind { GENRE, TAG }
+
+data class SearchTaxonomy(val id: Int, val name: String, val kind: SearchTaxonomyKind)
+
 @Singleton
 class AniListGraphQlService @Inject constructor(
     private val client: OkHttpClient,
@@ -52,6 +56,45 @@ class AniListGraphQlService @Inject constructor(
         val searchQuery = "query(\$page:Int!, \$search:String!){Page(page:\$page,perPage:20){media(search:\$search$typeClause,sort:SEARCH_MATCH){id type title{userPreferred romaji english native} coverImage{large} averageScore episodes chapters}}}"
         mediaPage(searchQuery, mapOf("page" to page, "search" to normalized), type)
     }.getOrDefault(emptyList())
+
+    @Volatile
+    private var taxonomyCache: List<SearchTaxonomy>? = null
+
+    suspend fun searchTaxonomies(query: String): List<SearchTaxonomy> = runCatching {
+        val normalized = query.trim()
+        require(normalized.isNotBlank())
+        val all = taxonomyCache ?: loadTaxonomies().also { taxonomyCache = it }
+        all.filter { it.name.contains(normalized, ignoreCase = true) }
+            .sortedWith(compareBy<SearchTaxonomy> { !it.name.equals(normalized, ignoreCase = true) }.thenBy { it.name.lowercase() })
+            .take(60)
+    }.getOrDefault(emptyList())
+
+    suspend fun searchByTaxonomy(taxonomy: SearchTaxonomy, type: MediaType?, page: Int = 1): List<MediaSummary> = runCatching {
+        val typeClause = type?.let { ",type:${it.name}" }.orEmpty()
+        val argument = if (taxonomy.kind == SearchTaxonomyKind.GENRE) "genre" else "tag"
+        val searchQuery = "query(\$page:Int!, \$name:String!){Page(page:\$page,perPage:20){media($argument:\$name$typeClause,sort:POPULARITY_DESC){id type title{userPreferred romaji english native} coverImage{large} averageScore episodes chapters}}}"
+        mediaPage(searchQuery, mapOf("page" to page, "name" to taxonomy.name), type)
+    }.getOrDefault(emptyList())
+
+    private suspend fun loadTaxonomies(): List<SearchTaxonomy> {
+        val query = "query{GenreCollection MediaTagCollection{id name isAdult}}"
+        val root = execute(query, emptyMap()).getJSONObject("data")
+        val genres = root.optJSONArray("GenreCollection") ?: JSONArray()
+        val tags = root.optJSONArray("MediaTagCollection") ?: JSONArray()
+        val result = mutableListOf<SearchTaxonomy>()
+        for (i in 0 until genres.length()) {
+            val name = genres.optString(i).trim()
+            if (name.isNotBlank()) result += SearchTaxonomy(i + 1, name, SearchTaxonomyKind.GENRE)
+        }
+        for (i in 0 until tags.length()) {
+            val tag = tags.optJSONObject(i) ?: continue
+            if (tag.optBoolean("isAdult", false)) continue
+            val id = tag.optInt("id", 0)
+            val name = tag.optString("name").trim()
+            if (id != 0 && name.isNotBlank()) result += SearchTaxonomy(id, name, SearchTaxonomyKind.TAG)
+        }
+        return result
+    }
 
     suspend fun viewerProfile(): AniListProfile {
         val viewer = execute(

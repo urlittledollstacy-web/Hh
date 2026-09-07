@@ -78,6 +78,8 @@ import app.hikari.core.auth.SecureTokenStore
 import app.hikari.core.model.MediaSummary
 import app.hikari.core.model.MediaType
 import app.hikari.data.remote.AniListGraphQlService
+import app.hikari.data.remote.SearchTaxonomy
+import app.hikari.data.remote.SearchTaxonomyKind
 import app.hikari.library.LibraryScreen
 import app.hikari.media.MediaDetailsScreen
 import app.hikari.profile.ProfileDetails
@@ -160,8 +162,20 @@ class HomeViewModel @Inject constructor(private val api: AniListGraphQlService) 
 }
 
 enum class SearchMediaFilter(val label: String, val type: MediaType?) { ALL("All", null), ANIME("Anime", MediaType.ANIME), MANGA("Manga", MediaType.MANGA) }
+enum class SearchMode { MEDIA, TAGS_GENRES }
 
-data class SearchUiState(val query: String = "", val results: List<MediaSummary> = emptyList(), val searching: Boolean = false, val loadingMore: Boolean = false, val page: Int = 1, val hasMore: Boolean = false, val filter: SearchMediaFilter = SearchMediaFilter.ALL)
+data class SearchUiState(
+    val query: String = "",
+    val results: List<MediaSummary> = emptyList(),
+    val taxonomyResults: List<SearchTaxonomy> = emptyList(),
+    val searching: Boolean = false,
+    val loadingMore: Boolean = false,
+    val page: Int = 1,
+    val hasMore: Boolean = false,
+    val filter: SearchMediaFilter = SearchMediaFilter.ALL,
+    val mode: SearchMode = SearchMode.MEDIA,
+    val taxonomy: SearchTaxonomy? = null,
+)
 
 @HiltViewModel
 class SearchViewModel @Inject constructor(private val api: AniListGraphQlService) : ViewModel() {
@@ -169,21 +183,59 @@ class SearchViewModel @Inject constructor(private val api: AniListGraphQlService
     val state: StateFlow<SearchUiState> = _state.asStateFlow()
     private var searchJob: Job? = null
 
+    fun toggleMode() {
+        val next = if (_state.value.mode == SearchMode.MEDIA) SearchMode.TAGS_GENRES else SearchMode.MEDIA
+        _state.value = _state.value.copy(
+            mode = next,
+            query = "",
+            results = emptyList(),
+            taxonomyResults = emptyList(),
+            page = 1,
+            hasMore = false,
+            taxonomy = null,
+        )
+        searchJob?.cancel()
+    }
+
     fun setQuery(value: String) {
         val normalized = value.take(80)
-        _state.value = _state.value.copy(query = normalized, results = emptyList(), page = 1, hasMore = false)
+        _state.value = _state.value.copy(
+            query = normalized,
+            results = emptyList(),
+            taxonomyResults = emptyList(),
+            page = 1,
+            hasMore = false,
+            taxonomy = null,
+        )
         searchJob?.cancel()
         if (normalized.trim().isBlank()) return
-        searchJob = viewModelScope.launch { delay(350); searchFirstPage() }
+        searchJob = viewModelScope.launch {
+            delay(if (_state.value.mode == SearchMode.MEDIA) 350 else 180)
+            searchFirstPage()
+        }
     }
 
     fun setFilter(filter: SearchMediaFilter) {
         if (_state.value.filter == filter) return
-        _state.value = _state.value.copy(filter = filter, results = emptyList(), page = 1, hasMore = false)
-        if (_state.value.query.trim().isNotBlank()) {
+        _state.value = _state.value.copy(filter = filter, results = emptyList(), page = 1, hasMore = false, taxonomy = null)
+        if (_state.value.mode == SearchMode.MEDIA && _state.value.query.trim().isNotBlank()) {
             searchJob?.cancel()
             searchJob = viewModelScope.launch { delay(180); searchFirstPage() }
         }
+    }
+
+    fun selectTaxonomy(item: SearchTaxonomy) {
+        _state.value = _state.value.copy(
+            mode = SearchMode.MEDIA,
+            query = item.name,
+            taxonomy = item,
+            taxonomyResults = emptyList(),
+            results = emptyList(),
+            page = 1,
+            hasMore = false,
+        )
+        searchJob?.cancel()
+        searchJob = viewModelScope.launch { searchFirstPage() }
     }
 
     fun loadMore() {
@@ -192,8 +244,11 @@ class SearchViewModel @Inject constructor(private val api: AniListGraphQlService
         viewModelScope.launch {
             val page = current.page + 1
             _state.value = _state.value.copy(loadingMore = true)
-            val next = runCatching { api.search(current.query.trim(), current.filter.type, page) }.getOrDefault(emptyList())
-            val merged = (_state.value.results + next).distinctBy { it.id }
+            val next = runCatching {
+                current.taxonomy?.let { api.searchByTaxonomy(it, current.filter.type, page) }
+                    ?: api.search(current.query.trim(), current.filter.type, page)
+            }.getOrDefault(emptyList())
+            val merged = (_state.value.results + next).distinctBy { it.id to it.type }
             _state.value = _state.value.copy(results = merged, page = page, hasMore = next.size >= 20, loadingMore = false)
         }
     }
@@ -203,8 +258,17 @@ class SearchViewModel @Inject constructor(private val api: AniListGraphQlService
         val query = current.query.trim()
         if (query.isBlank()) return
         _state.value = _state.value.copy(searching = true, loadingMore = false, page = 1, hasMore = false)
-        val results = runCatching { api.search(query, current.filter.type, 1) }.getOrDefault(emptyList())
-        if (_state.value.query.trim() != query) return
+        if (current.mode == SearchMode.TAGS_GENRES) {
+            val matches = runCatching { api.searchTaxonomies(query) }.getOrDefault(emptyList())
+            if (_state.value.query.trim() != query || _state.value.mode != SearchMode.TAGS_GENRES) return
+            _state.value = _state.value.copy(taxonomyResults = matches, searching = false)
+            return
+        }
+        val results = runCatching {
+            current.taxonomy?.let { api.searchByTaxonomy(it, current.filter.type, 1) }
+                ?: api.search(query, current.filter.type, 1)
+        }.getOrDefault(emptyList())
+        if (_state.value.query.trim() != query || _state.value.mode != SearchMode.MEDIA) return
         _state.value = _state.value.copy(results = results, searching = false, page = 1, hasMore = results.size >= 20)
     }
 
@@ -266,16 +330,84 @@ private fun HomeScreen(padding: PaddingValues, onSearch: () -> Unit, onMediaClic
 private fun DiscoverScreen(padding: PaddingValues, onMediaClick: (MediaSummary) -> Unit, vm: SearchViewModel = hiltViewModel()) {
     val state by vm.state.collectAsState()
     LazyColumn(contentPadding = PaddingValues(20.dp, 28.dp, 20.dp, padding.calculateBottomPadding() + 24.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        item { Text("Discover", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold); Text("Search AniList instantly", color = MaterialTheme.colorScheme.onSurfaceVariant) }
-        item { OutlinedTextField(value = state.query, onValueChange = vm::setQuery, modifier = Modifier.fillMaxWidth(), singleLine = true, placeholder = { Text("Search anime, manga...") }, leadingIcon = { Icon(Icons.Outlined.Search, "Search") }, trailingIcon = { if (state.query.isNotBlank()) TextButton(onClick = { vm.setQuery("") }) { Text("Clear") } }) }
-        item { Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) { SearchMediaFilter.entries.forEach { filter -> val active = filter == state.filter; Box(Modifier.clip(CircleShape).background(if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant).clickable { vm.setFilter(filter) }.padding(horizontal = 16.dp, vertical = 10.dp)) { Text(filter.label, color = if (active) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface, fontSize = 12.sp, fontWeight = if (active) FontWeight.Bold else FontWeight.Normal) } } } }
+        item {
+            Text("Discover", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
+            Text(
+                if (state.mode == SearchMode.MEDIA) "Search AniList instantly" else "Browse AniList tags and genres",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        item {
+            OutlinedTextField(
+                value = state.query,
+                onValueChange = vm::setQuery,
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                placeholder = { Text(if (state.mode == SearchMode.MEDIA) "Search anime, manga..." else "Search tags or genres...") },
+                leadingIcon = { Icon(Icons.Outlined.Search, "Search") },
+                trailingIcon = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (state.query.isNotBlank()) {
+                            TextButton(onClick = { vm.setQuery("") }) { Text("Clear") }
+                        }
+                        IconButton(onClick = vm::toggleMode) {
+                            PixelSearchModeIcon(state.mode == SearchMode.TAGS_GENRES)
+                        }
+                    }
+                },
+            )
+        }
+        if (state.mode == SearchMode.MEDIA) {
+            item {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    SearchMediaFilter.entries.forEach { filter ->
+                        val active = filter == state.filter
+                        Box(Modifier.clip(CircleShape).background(if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant).clickable { vm.setFilter(filter) }.padding(horizontal = 16.dp, vertical = 10.dp)) {
+                            Text(filter.label, color = if (active) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface, fontSize = 12.sp, fontWeight = if (active) FontWeight.Bold else FontWeight.Normal)
+                        }
+                    }
+                }
+            }
+        }
         if (state.searching) item { Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) { CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp) } }
-        if (state.query.isBlank()) item { EmptyMessage("Start typing — Hikari will show suggestions automatically.") }
-        else if (!state.searching && state.results.isEmpty()) item { EmptyMessage("No results found for \"${state.query.trim()}\".") }
-        else if (state.results.isNotEmpty()) {
-            item { Text(if (state.query.trim().length == 1) "Suggestions" else "Results", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
+        if (state.query.isBlank()) {
+            item { EmptyMessage(if (state.mode == SearchMode.MEDIA) "Start typing — Hikari will show suggestions automatically." else "Search for a genre or tag, then tap it to browse matching media.") }
+        } else if (!state.searching && state.mode == SearchMode.TAGS_GENRES && state.taxonomyResults.isEmpty()) {
+            item { EmptyMessage("No tags or genres found for "${state.query.trim()}".") }
+        } else if (!state.searching && state.mode == SearchMode.MEDIA && state.results.isEmpty()) {
+            item { EmptyMessage("No results found for "${state.query.trim()}".") }
+        } else if (state.mode == SearchMode.TAGS_GENRES && state.taxonomyResults.isNotEmpty()) {
+            item { Text("Tags & genres", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
+            items(state.taxonomyResults, key = { "${it.kind}:${it.id}" }) { item ->
+                Card(Modifier.fillMaxWidth().clickable { vm.selectTaxonomy(item) }, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text(item.name, fontWeight = FontWeight.SemiBold)
+                            Text(if (item.kind == SearchTaxonomyKind.GENRE) "Genre" else "Tag", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
+                        }
+                        Text("›", fontSize = 22.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            }
+        } else if (state.results.isNotEmpty()) {
+            item { Text(if (state.taxonomy != null) "${state.taxonomy!!.name} results" else if (state.query.trim().length == 1) "Suggestions" else "Results", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
             item { SearchResults(state.results, onMediaClick) }
             if (state.hasMore) item { Button(onClick = vm::loadMore, enabled = !state.loadingMore, modifier = Modifier.fillMaxWidth()) { if (state.loadingMore) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp) else Text("Load more") } }
+        }
+    }
+}
+
+@Composable
+private fun PixelSearchModeIcon(active: Boolean) {
+    val on = MaterialTheme.colorScheme.primary
+    val off = MaterialTheme.colorScheme.onSurfaceVariant
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        repeat(3) { row ->
+            Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                repeat(3) { col ->
+                    Box(Modifier.size(4.dp).background(if ((row + col) % 2 == 0) on else off))
+                }
+            }
         }
     }
 }
