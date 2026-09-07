@@ -62,51 +62,66 @@ class AniListGraphQlService @Inject constructor(
         val anime = statistics.optJSONObject("anime") ?: JSONObject()
         val manga = statistics.optJSONObject("manga") ?: JSONObject()
 
-        var animeCount = anime.optInt("count")
-        var episodesWatched = anime.optInt("episodesWatched")
-        var daysWatched = anime.optInt("minutesWatched") / 1440.0
-        var animeMeanScore = anime.optDouble("meanScore", 0.0)
-        var mangaCount = manga.optInt("count")
-        var chaptersRead = manga.optInt("chaptersRead")
-        var volumesRead = manga.optInt("volumesRead")
-        var mangaMeanScore = manga.optDouble("meanScore", 0.0)
+        val aggregateAnimeCount = anime.optInt("count")
+        val aggregateEpisodesWatched = anime.optInt("episodesWatched")
+        val aggregateDaysWatched = anime.optInt("minutesWatched") / 1440.0
+        val aggregateAnimeMeanScore = anime.optDouble("meanScore", 0.0)
+        val aggregateMangaCount = manga.optInt("count")
+        val aggregateChaptersRead = manga.optInt("chaptersRead")
+        val aggregateVolumesRead = manga.optInt("volumesRead")
+        val aggregateMangaMeanScore = manga.optDouble("meanScore", 0.0)
 
-        // Some AniList accounts can return zeroed aggregate statistics. Use the user's
-        // actual list entries as a fallback so Profile matches the list pages.
-        if (animeCount == 0 || mangaCount == 0 || episodesWatched == 0 || chaptersRead == 0) {
-            val fallback = loadViewerListStats(viewer.getInt("id"))
-            if (animeCount == 0) animeCount = fallback.animeCount
-            if (episodesWatched == 0) episodesWatched = fallback.episodesWatched
-            if (daysWatched == 0.0) daysWatched = fallback.daysWatched
-            if (animeMeanScore == 0.0) animeMeanScore = fallback.animeMeanScore
-            if (mangaCount == 0) mangaCount = fallback.mangaCount
-            if (chaptersRead == 0) chaptersRead = fallback.chaptersRead
-            if (volumesRead == 0) volumesRead = fallback.volumesRead
-            if (mangaMeanScore == 0.0) mangaMeanScore = fallback.mangaMeanScore
-        }
+        // Use the authenticated user's actual list entries as the authoritative source.
+        // AniList returns the same MediaList entry in both its status section and any
+        // custom lists it belongs to (for example Reading + Yuri). Counting every
+        // collection entry would therefore double-count titles/progress.
+        val syncedStats = runCatching {
+            loadViewerListStats(viewer.getInt("id"))
+        }.getOrNull()
+
+        val stats = syncedStats ?: ListStats(
+            animeCount = aggregateAnimeCount,
+            episodesWatched = aggregateEpisodesWatched,
+            daysWatched = aggregateDaysWatched,
+            animeMeanScore = aggregateAnimeMeanScore,
+            mangaCount = aggregateMangaCount,
+            chaptersRead = aggregateChaptersRead,
+            volumesRead = aggregateVolumesRead,
+            mangaMeanScore = aggregateMangaMeanScore,
+        )
 
         return AniListProfile(
             id = viewer.getInt("id"), name = viewer.getString("name"),
             avatarUrl = viewer.optJSONObject("avatar")?.optString("large"),
             bannerUrl = viewer.optionalText("bannerImage"),
             about = viewer.optionalText("about"),
-            animeCount = animeCount, episodesWatched = episodesWatched,
-            daysWatched = daysWatched, animeMeanScore = animeMeanScore,
-            mangaCount = mangaCount, chaptersRead = chaptersRead, volumesRead = volumesRead,
-            daysRead = 0.0, mangaMeanScore = mangaMeanScore,
+            animeCount = stats.animeCount,
+            episodesWatched = stats.episodesWatched,
+            daysWatched = stats.daysWatched,
+            animeMeanScore = stats.animeMeanScore,
+            mangaCount = stats.mangaCount,
+            chaptersRead = stats.chaptersRead,
+            volumesRead = stats.volumesRead,
+            daysRead = 0.0,
+            mangaMeanScore = stats.mangaMeanScore,
         )
     }
 
     private suspend fun loadViewerListStats(userId: Int): ListStats {
-        val animeQuery = "query(\$userId:Int!){MediaListCollection(userId:\$userId,type:ANIME){lists{entries{score progress media{id duration}}}}}"
-        val mangaQuery = "query(\$userId:Int!){MediaListCollection(userId:\$userId,type:MANGA){lists{entries{score progress progressVolumes media{id}}}}}"
+        val animeQuery = "query(\$userId:Int!){MediaListCollection(userId:\$userId,type:ANIME){lists{name entries{id score progress media{id duration}}}}}"
+        val mangaQuery = "query(\$userId:Int!){MediaListCollection(userId:\$userId,type:MANGA){lists{name entries{id score progress progressVolumes media{id}}}}}"
+
         val animeLists = execute(animeQuery, mapOf("userId" to userId))
             .getJSONObject("data").getJSONObject("MediaListCollection").getJSONArray("lists")
         val mangaLists = execute(mangaQuery, mapOf("userId" to userId))
             .getJSONObject("data").getJSONObject("MediaListCollection").getJSONArray("lists")
 
-        val animeEntries = flattenEntries(animeLists)
-        val mangaEntries = flattenEntries(mangaLists)
+        // The same MediaList entry can appear once in a normal status section and again
+        // in one or more custom lists. Deduplicate by the MediaList entry ID, not media ID:
+        // the entry ID is the user's actual list record and is stable across those views.
+        val animeEntries = uniqueListEntries(animeLists)
+        val mangaEntries = uniqueListEntries(mangaLists)
+
         val animeScored = animeEntries.mapNotNull { it.optDouble("score", 0.0).takeIf { score -> score > 0.0 } }
         val mangaScored = mangaEntries.mapNotNull { it.optDouble("score", 0.0).takeIf { score -> score > 0.0 } }
         val animeMinutes = animeEntries.sumOf { entry ->
@@ -127,13 +142,17 @@ class AniListGraphQlService @Inject constructor(
         )
     }
 
-    private fun flattenEntries(lists: JSONArray): List<JSONObject> {
-        val entries = mutableListOf<JSONObject>()
+    private fun uniqueListEntries(lists: JSONArray): List<JSONObject> {
+        val entriesById = linkedMapOf<Int, JSONObject>()
         for (i in 0 until lists.length()) {
             val values = lists.getJSONObject(i).optJSONArray("entries") ?: continue
-            for (j in 0 until values.length()) entries += values.getJSONObject(j)
+            for (j in 0 until values.length()) {
+                val entry = values.getJSONObject(j)
+                val entryId = entry.optInt("id", 0)
+                if (entryId != 0) entriesById.putIfAbsent(entryId, entry)
+            }
         }
-        return entries
+        return entriesById.values.toList()
     }
 
     private data class ListStats(
