@@ -329,7 +329,7 @@ private fun HikariApp(signedIn: Boolean, onSignIn: () -> Unit, onSignOut: () -> 
                         NavigationRail(destination, { destination = it }, navStyle)
                         AppContent(destination, theme, navStyle, signedIn, onSignIn, onSignOut, { theme = it }, { navStyle = it }, PaddingValues(0.dp), { destination = it }, { selectedMedia = it }, { showTrending = true })
                     } else Box(Modifier.fillMaxSize()) {
-                        AppContent(destination, theme, navStyle, signedIn, onSignIn, onSignOut, { theme = it }, { theme = it }, PaddingValues(bottom = 104.dp), { destination = it }, { selectedMedia = it }, { showTrending = true })
+                        AppContent(destination, theme, navStyle, signedIn, onSignIn, onSignOut, { theme = it }, { navStyle = it }, PaddingValues(bottom = 104.dp), { destination = it }, { selectedMedia = it }, { showTrending = true })
                         BottomNavigation(destination, { destination = it }, navStyle, Modifier.align(Alignment.BottomCenter).padding(16.dp))
                     }
                 }
