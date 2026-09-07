@@ -20,16 +20,18 @@ class AniListGraphQlService @Inject constructor(
     private val client: OkHttpClient,
     private val tokenStore: SecureTokenStore,
 ) {
-    suspend fun trending(type: MediaType, page: Int = 1): List<MediaSummary> = mediaPage(
-        "query(\$page:Int!, \$type:MediaType!){Page(page:\$page,perPage:20){media(type:\$type,sort:TRENDING_DESC){id type title{romaji english} coverImage{large} averageScore episodes chapters}}}",
-        mapOf("page" to page, "type" to type.name), type,
-    )
+    suspend fun trending(type: MediaType, page: Int = 1): List<MediaSummary> = runCatching {
+        mediaPage(
+            "query(\$page:Int!, \$type:MediaType!){Page(page:\$page,perPage:20){media(type:\$type,sort:TRENDING_DESC){id type title{romaji english} coverImage{large} averageScore episodes chapters}}}",
+            mapOf("page" to page, "type" to type.name), type,
+        )
+    }.getOrDefault(emptyList())
 
-    suspend fun airingSoon(page: Int = 1, perPage: Int = 12, now: Long = System.currentTimeMillis() / 1000): List<MediaSummary> {
+    suspend fun airingSoon(page: Int = 1, perPage: Int = 12, now: Long = System.currentTimeMillis() / 1000): List<MediaSummary> = runCatching {
         val query = "query(\$page:Int!, \$perPage:Int!, \$now:Int!){Page(page:\$page,perPage:\$perPage){airingSchedules(airingAt_greater:\$now,sort:TIME_ASC){episode airingAt media{id type title{romaji english} coverImage{large} averageScore episodes chapters}}}}"
         val data = execute(query, mapOf("page" to page, "perPage" to perPage, "now" to now))
             .getJSONObject("data").getJSONObject("Page").getJSONArray("airingSchedules")
-        return List(data.length()) { index ->
+        List(data.length()) { index ->
             val media = data.getJSONObject(index).getJSONObject("media")
             val titleObject = media.getJSONObject("title")
             val title = titleObject.optString("english").ifBlank { titleObject.optString("romaji") }
@@ -42,12 +44,14 @@ class AniListGraphQlService @Inject constructor(
                 episodesOrChapters = media.optInt("episodes").takeIf { it != 0 },
             )
         }
-    }
+    }.getOrDefault(emptyList())
 
-    suspend fun search(query: String, type: MediaType?, page: Int = 1): List<MediaSummary> = mediaPage(
-        "query(\$page:Int!, \$search:String!, \$type:MediaType){Page(page:\$page,perPage:20){media(search:\$search,type:\$type,sort:SEARCH_MATCH){id type title{romaji english} coverImage{large} averageScore episodes chapters}}}",
-        buildMap { put("page", page); put("search", query); put("type", type?.name) }, type,
-    )
+    suspend fun search(query: String, type: MediaType?, page: Int = 1): List<MediaSummary> = runCatching {
+        mediaPage(
+            "query(\$page:Int!, \$search:String!, \$type:MediaType){Page(page:\$page,perPage:20){media(search:\$search,type:\$type,sort:SEARCH_MATCH){id type title{romaji english} coverImage{large} averageScore episodes chapters}}}",
+            buildMap { put("page", page); put("search", query); put("type", type?.name) }, type,
+        )
+    }.getOrDefault(emptyList())
 
     private suspend fun mediaPage(query: String, variables: Map<String, Any?>, requestedType: MediaType?): List<MediaSummary> {
         val data = execute(query, variables).getJSONObject("data").getJSONObject("Page").getJSONArray("media")
