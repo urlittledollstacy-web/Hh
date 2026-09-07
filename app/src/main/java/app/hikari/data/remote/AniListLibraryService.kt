@@ -69,20 +69,27 @@ class AniListLibraryService @Inject constructor(
     }
 
     suspend fun updateEntry(entry: LibraryEntry, status: String, progress: Int, score: Double) = withContext(Dispatchers.IO) {
-        // AniList's documented create flow omits id entirely. Do the same for new entries
-        // instead of sending an explicit null, while still sending id for real updates.
+        // New entries follow AniList's documented create shape: omit id, and avoid sending
+        // an explicit zero score because a new entry already has no score by default.
         val hasExistingEntry = entry.id > 0
-        val mutation = if (hasExistingEntry) {
-            "mutation(\$id:Int,\$mediaId:Int,\$status:MediaListStatus,\$score:Float,\$progress:Int){SaveMediaListEntry(id:\$id,mediaId:\$mediaId,status:\$status,score:\$score,progress:\$progress){id status progress score}}"
-        } else {
-            "mutation(\$mediaId:Int,\$status:MediaListStatus,\$score:Float,\$progress:Int){SaveMediaListEntry(mediaId:\$mediaId,status:\$status,score:\$score,progress:\$progress){id status progress score}}"
+        val includeScore = hasExistingEntry || score > 0.0
+        val mutation = buildString {
+            append("mutation(")
+            if (hasExistingEntry) append("\$id:Int,")
+            append("\$mediaId:Int,\$status:MediaListStatus,\$progress:Int")
+            if (includeScore) append(",\$score:Float")
+            append("){SaveMediaListEntry(")
+            if (hasExistingEntry) append("id:\$id,")
+            append("mediaId:\$mediaId,status:\$status,progress:\$progress")
+            if (includeScore) append(",score:\$score")
+            append("){id status progress score}}")
         }
         val variables = buildMap<String, Any?> {
             if (hasExistingEntry) put("id", entry.id)
             put("mediaId", entry.media.id)
             put("status", status)
-            put("score", score)
             put("progress", progress)
+            if (includeScore) put("score", score)
         }
         execute(mutation, variables)
     }
