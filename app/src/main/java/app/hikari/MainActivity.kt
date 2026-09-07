@@ -79,7 +79,7 @@ import app.hikari.core.model.MediaType
 import app.hikari.data.remote.AniListGraphQlService
 import app.hikari.profile.ProfileDetails
 import coil3.compose.AsyncImage
-aimport dagger.hilt.android.AndroidEntryPoint
+import dagger.hilt.android.AndroidEntryPoint
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
