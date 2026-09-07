@@ -5,6 +5,7 @@ import androidx.room.Room
 import app.hikari.data.DefaultMediaRepository
 import app.hikari.data.MediaRepository
 import app.hikari.data.local.HikariDatabase
+import app.hikari.data.local.HikariFavoriteDao
 import app.hikari.data.local.MediaCacheDao
 import dagger.Binds
 import dagger.Module
@@ -24,5 +25,6 @@ abstract class RepositoryModule { @Binds abstract fun bindMediaRepository(implem
 object StorageModule {
     @Provides @Singleton fun database(@ApplicationContext context: Context): HikariDatabase = Room.databaseBuilder(context, HikariDatabase::class.java, "hikari.db").fallbackToDestructiveMigration().build()
     @Provides fun mediaCacheDao(database: HikariDatabase): MediaCacheDao = database.mediaCacheDao()
+    @Provides fun hikariFavoriteDao(database: HikariDatabase): HikariFavoriteDao = database.hikariFavoriteDao()
     @Provides @Singleton fun okHttpClient(): OkHttpClient = OkHttpClient.Builder().build()
 }
