@@ -13,12 +13,13 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.ArrowBack
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -44,10 +45,14 @@ import app.hikari.core.model.MediaType
 import app.hikari.data.remote.AniListGraphQlService
 import coil3.compose.AsyncImage
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
-private data class TrendingUiState(
+data class TrendingUiState(
     val items: List<MediaSummary> = emptyList(),
     val loading: Boolean = true,
     val loadingMore: Boolean = false,
@@ -59,8 +64,8 @@ class TrendingViewModel @Inject constructor(
     private val api: AniListGraphQlService,
 ) : ViewModel() {
     private var page = 0
-    private val _state = kotlinx.coroutines.flow.MutableStateFlow(TrendingUiState())
-    val state = _state
+    private val _state = MutableStateFlow(TrendingUiState())
+    val state: StateFlow<TrendingUiState> = _state.asStateFlow()
 
     init {
         loadMore()
@@ -96,10 +101,13 @@ fun TrendingScreen(
     val gridState = rememberLazyGridState()
 
     LaunchedEffect(gridState, state.items.size, state.hasMore, state.loadingMore) {
-        snapshotFlow { gridState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1 }
-            .collect { lastVisible ->
-                if (lastVisible >= state.items.size - 4) vm.loadMore()
+        snapshotFlow {
+            gridState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
+        }.distinctUntilChanged().collect { lastVisible ->
+            if (state.hasMore && !state.loadingMore && lastVisible >= state.items.size - 4) {
+                vm.loadMore()
             }
+        }
     }
 
     Column(Modifier.fillMaxSize()) {
@@ -108,7 +116,7 @@ fun TrendingScreen(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             IconButton(onClick = onBack) {
-                Icon(Icons.Outlined.ArrowBack, "Back")
+                Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Back")
             }
             Column(Modifier.weight(1f)) {
                 Text("Trending now", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
@@ -136,7 +144,7 @@ fun TrendingScreen(
                     TrendingCard(media, onMediaClick)
                 }
                 if (state.loadingMore) {
-                    item(span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) {
+                    item(span = { GridItemSpan(maxLineSpan) }) {
                         Box(Modifier.fillMaxWidth().padding(vertical = 12.dp), contentAlignment = Alignment.Center) {
                             CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
                         }
