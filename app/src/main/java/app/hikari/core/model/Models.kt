@@ -46,3 +46,16 @@ data class MediaDetail(
 data class AniListUser(val id: Int, val name: String, val avatarUrl: String?, val about: String?)
 
 data class LibraryEntry(val id: Int, val media: MediaSummary, val status: String, val progress: Int, val score: Double?)
+
+data class AiringScheduleEntry(
+    val id: Long,
+    val airingAt: Long,
+    val timeUntilAiring: Long,
+    val episode: Int,
+    val mediaId: Int,
+    val mediaType: MediaType,
+    val title: String,
+    val coverUrl: String?,
+    val averageScore: Int?,
+    val totalEpisodes: Int?,
+)
