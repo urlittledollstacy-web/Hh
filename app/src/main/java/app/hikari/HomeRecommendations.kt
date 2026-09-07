@@ -46,6 +46,7 @@ import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 // Personalized recommendations are derived from the user's recent AniList entries.
+// Home section stays intentionally compact: one horizontal row, no filter wall.
 data class HomeRecommendationsUiState(
     val items: List<MediaSummary> = emptyList(),
     val loading: Boolean = true,
