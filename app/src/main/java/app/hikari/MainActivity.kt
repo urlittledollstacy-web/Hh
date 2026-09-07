@@ -6,6 +6,7 @@ import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -20,7 +21,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -88,47 +88,41 @@ class MainActivity : ComponentActivity() {
 }
 
 private enum class Destination(val label: String, val icon: ImageVector) {
-    Home("Home", Icons.Outlined.Home),
-    Discover("Discover", Icons.Outlined.CompassCalibration),
-    Library("Library", Icons.Outlined.BookmarkBorder),
-    Calendar("Calendar", Icons.Outlined.CalendarMonth),
-    Profile("Profile", Icons.Outlined.PersonOutline),
+    Home("Home", Icons.Outlined.Home), Discover("Discover", Icons.Outlined.CompassCalibration),
+    Library("Library", Icons.Outlined.BookmarkBorder), Calendar("Calendar", Icons.Outlined.CalendarMonth),
+    Profile("Profile", Icons.Outlined.PersonOutline)
 }
-
 private enum class AppTheme { System, Amoled, Aurora }
 private enum class NavigationStyle { Blur, Liquid, Off }
 
-data class HomeUiState(
-    val trending: List<MediaSummary> = emptyList(),
-    val airing: List<MediaSummary> = emptyList(),
-    val loading: Boolean = true,
-    val refreshing: Boolean = false,
-    val error: String? = null,
-)
+data class HomeUiState(val trending: List<MediaSummary> = emptyList(), val airing: List<MediaSummary> = emptyList(), val loading: Boolean = true, val refreshing: Boolean = false, val error: String? = null)
 
 @HiltViewModel
-class HomeViewModel @Inject constructor(
-    private val api: AniListGraphQlService,
-) : ViewModel() {
+class HomeViewModel @Inject constructor(private val api: AniListGraphQlService) : ViewModel() {
     private val _state = MutableStateFlow(HomeUiState())
     val state: StateFlow<HomeUiState> = _state.asStateFlow()
-
     init { refresh() }
+    fun refresh() = viewModelScope.launch {
+        _state.value = _state.value.copy(refreshing = true, error = null)
+        val trending = runCatching { api.trending(MediaType.ANIME) }.getOrDefault(emptyList())
+        val airing = runCatching { api.airingSoon() }.getOrDefault(emptyList())
+        _state.value = HomeUiState(trending, airing, false, false, if (trending.isEmpty() && airing.isEmpty()) "AniList is unavailable right now. Try again in a moment." else null)
+    }
+}
 
-    fun refresh() {
-        viewModelScope.launch {
-            _state.value = _state.value.copy(refreshing = true, error = null)
-            val trending = runCatching { api.trending(MediaType.ANIME) }.getOrDefault(emptyList())
-            val airing = runCatching { api.airingSoon() }.getOrDefault(emptyList())
-            val hasData = trending.isNotEmpty() || airing.isNotEmpty()
-            _state.value = HomeUiState(
-                trending = trending,
-                airing = airing,
-                loading = false,
-                refreshing = false,
-                error = if (hasData) null else "AniList is unavailable right now. Try again in a moment.",
-            )
-        }
+data class SearchUiState(val query: String = "", val results: List<MediaSummary> = emptyList(), val searching: Boolean = false)
+
+@HiltViewModel
+class SearchViewModel @Inject constructor(private val api: AniListGraphQlService) : ViewModel() {
+    private val _state = MutableStateFlow(SearchUiState())
+    val state: StateFlow<SearchUiState> = _state.asStateFlow()
+    fun setQuery(value: String) { _state.value = _state.value.copy(query = value) }
+    fun search() = viewModelScope.launch {
+        val query = _state.value.query.trim()
+        if (query.isBlank()) return@launch
+        _state.value = _state.value.copy(searching = true)
+        val results = api.search(query, MediaType.ANIME)
+        _state.value = _state.value.copy(results = results, searching = false)
     }
 }
 
@@ -137,14 +131,11 @@ private fun HikariApp() {
     var destination by remember { mutableStateOf(Destination.Home) }
     var theme by remember { mutableStateOf(AppTheme.System) }
     var navigationStyle by remember { mutableStateOf(NavigationStyle.Blur) }
-    val darkSystem = isSystemInDarkTheme()
-    val colors = hikariColors(theme, darkSystem)
-
+    val colors = hikariColors(theme, isSystemInDarkTheme())
     MaterialTheme(colorScheme = colors) {
         Surface(Modifier.fillMaxSize(), color = colors.background) {
             androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize()) {
-                val expanded = maxWidth >= 700.dp
-                if (expanded) {
+                if (maxWidth >= 700.dp) {
                     Row(Modifier.fillMaxSize()) {
                         NavigationRail(destination, { destination = it }, navigationStyle)
                         AppContent(destination, theme, navigationStyle, { theme = it }, { navigationStyle = it }, PaddingValues(0.dp))
@@ -152,12 +143,7 @@ private fun HikariApp() {
                 } else {
                     Box(Modifier.fillMaxSize()) {
                         AppContent(destination, theme, navigationStyle, { theme = it }, { navigationStyle = it }, PaddingValues(bottom = 104.dp))
-                        FloatingNavigationBar(
-                            selected = destination,
-                            onDestination = { destination = it },
-                            style = navigationStyle,
-                            modifier = Modifier.align(Alignment.BottomCenter).padding(horizontal = 18.dp, vertical = 16.dp),
-                        )
+                        BottomNavigation(destination, { destination = it }, navigationStyle, Modifier.align(Alignment.BottomCenter).padding(16.dp))
                     }
                 }
             }
@@ -166,188 +152,79 @@ private fun HikariApp() {
 }
 
 @Composable
-private fun AppContent(
-    destination: Destination,
-    theme: AppTheme,
-    navigationStyle: NavigationStyle,
-    onTheme: (AppTheme) -> Unit,
-    onNavigationStyle: (NavigationStyle) -> Unit,
-    contentPadding: PaddingValues,
-) {
+private fun AppContent(destination: Destination, theme: AppTheme, navigationStyle: NavigationStyle, onTheme: (AppTheme) -> Unit, onNavigationStyle: (NavigationStyle) -> Unit, padding: PaddingValues) {
     when (destination) {
-        Destination.Home -> HomeScreen(contentPadding, onSearch = { })
-        Destination.Discover -> DiscoverScreen(contentPadding)
-        Destination.Library -> PlaceholderScreen("Your library", "ANILIST SYNC", "Sign in to keep your watching and reading progress organized across AniList.", "Sign in with AniList", contentPadding)
-        Destination.Calendar -> PlaceholderScreen("Airing calendar", "THIS WEEK", "See upcoming episodes at a glance.", "View today's airing", contentPadding)
-        Destination.Profile -> ProfileScreen(theme, navigationStyle, onTheme, onNavigationStyle, contentPadding)
+        Destination.Home -> HomeScreen(padding)
+        Destination.Discover -> DiscoverScreen(padding)
+        Destination.Library -> PlaceholderScreen("Your library", "ANILIST SYNC", "Sign in to keep your watching and reading progress organized across AniList.", "Sign in with AniList", padding)
+        Destination.Calendar -> PlaceholderScreen("Airing calendar", "THIS WEEK", "See upcoming episodes at a glance.", "View today's airing", padding)
+        Destination.Profile -> ProfileScreen(theme, navigationStyle, onTheme, onNavigationStyle, padding)
     }
 }
 
 @Composable
-private fun HomeScreen(contentPadding: PaddingValues, onSearch: () -> Unit, vm: HomeViewModel = hiltViewModel()) {
+private fun HomeScreen(padding: PaddingValues, vm: HomeViewModel = hiltViewModel()) {
     val state by vm.state.collectAsState()
-    LazyColumn(
-        contentPadding = PaddingValues(start = 20.dp, top = 26.dp, end = 20.dp, bottom = contentPadding.calculateBottomPadding() + 20.dp),
-        verticalArrangement = Arrangement.spacedBy(22.dp),
-    ) {
+    LazyColumn(contentPadding = PaddingValues(20.dp, 26.dp, 20.dp, padding.calculateBottomPadding() + 20.dp), verticalArrangement = Arrangement.spacedBy(22.dp)) {
         item {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text("Good evening", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text("Find your next favorite.", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-                }
-                Box(Modifier.size(44.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primary), contentAlignment = Alignment.Center) {
-                    Text("H", color = MaterialTheme.colorScheme.onPrimary, fontWeight = FontWeight.Bold)
-                }
+                Column(Modifier.weight(1f)) { Text("Good evening", color = MaterialTheme.colorScheme.onSurfaceVariant); Text("Find your next favorite.", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold) }
+                Box(Modifier.size(44.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primary), contentAlignment = Alignment.Center) { Text("H", color = MaterialTheme.colorScheme.onPrimary, fontWeight = FontWeight.Bold) }
             }
         }
-        item { SearchPrompt(onClick = onSearch) }
-        if (state.error != null) {
-            item {
-                Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)) {
-                    Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Text(state.error.orEmpty(), Modifier.weight(1f), color = MaterialTheme.colorScheme.onErrorContainer)
-                        TextButton(onClick = vm::refresh) { Text("Retry") }
-                    }
-                }
-            }
-        }
+        item { SearchPrompt() }
+        if (state.error != null) item { Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)) { Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) { Text(state.error.orEmpty(), Modifier.weight(1f), color = MaterialTheme.colorScheme.onErrorContainer); TextButton(onClick = vm::refresh) { Text("Retry") } } } }
         item { SectionTitle("Airing soon", "See all") }
-        item {
-            if (state.loading) LoadingRow()
-            else if (state.airing.isEmpty()) EmptyMessage("No upcoming episodes found.")
-            else MediaRow(state.airing, airing = true)
-        }
-        item {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text("Trending now", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                IconButton(onClick = vm::refresh, enabled = !state.refreshing) {
-                    if (state.refreshing) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-                    else Icon(Icons.Outlined.Refresh, "Refresh")
-                }
-            }
-        }
-        item {
-            if (state.loading) LoadingRow()
-            else if (state.trending.isEmpty()) EmptyMessage("No trending anime found.")
-            else MediaRow(state.trending)
-        }
+        item { if (state.loading) LoadingRow() else if (state.airing.isEmpty()) EmptyMessage("No upcoming episodes found.") else MediaRow(state.airing, true) }
+        item { Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) { Text("Trending now", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f)); IconButton(onClick = vm::refresh, enabled = !state.refreshing) { if (state.refreshing) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp) else Icon(Icons.Outlined.Refresh, "Refresh") } } }
+        item { if (state.loading) LoadingRow() else if (state.trending.isEmpty()) EmptyMessage("No trending anime found.") else MediaRow(state.trending) }
     }
 }
 
 @Composable
-private fun SearchPrompt(onClick: () -> Unit) {
-    Row(
-        Modifier.fillMaxWidth().height(58.dp).clip(RoundedCornerShape(18.dp)).background(MaterialTheme.colorScheme.surfaceVariant).clickable(onClick = onClick).padding(horizontal = 15.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Icon(Icons.Outlined.Search, contentDescription = "Search", tint = MaterialTheme.colorScheme.onSurfaceVariant)
-        Spacer(Modifier.width(10.dp))
-        Text("Search anime, manga, people...", color = MaterialTheme.colorScheme.onSurfaceVariant)
-    }
-}
-
-data class SearchUiState(
-    val query: String = "",
-    val results: List<MediaSummary> = emptyList(),
-    val searching: Boolean = false,
-)
-
-@HiltViewModel
-class SearchViewModel @Inject constructor(
-    private val api: AniListGraphQlService,
-) : ViewModel() {
-    private val _state = MutableStateFlow(SearchUiState())
-    val state: StateFlow<SearchUiState> = _state.asStateFlow()
-
-    fun setQuery(value: String) { _state.value = _state.value.copy(query = value) }
-
-    fun search() {
-        val query = _state.value.query.trim()
-        if (query.isBlank()) return
-        viewModelScope.launch {
-            _state.value = _state.value.copy(searching = true)
-            val results = api.search(query, MediaType.ANIME)
-            _state.value = _state.value.copy(results = results, searching = false)
-        }
+private fun SearchPrompt() {
+    Row(Modifier.fillMaxWidth().height(58.dp).clip(RoundedCornerShape(18.dp)).background(MaterialTheme.colorScheme.surfaceVariant).clickable { }, verticalAlignment = Alignment.CenterVertically) {
+        Icon(Icons.Outlined.Search, "Search", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 15.dp))
+        Spacer(Modifier.width(10.dp)); Text("Search anime, manga, people...", color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
 @Composable
 private fun DiscoverScreen(padding: PaddingValues, vm: SearchViewModel = hiltViewModel()) {
     val state by vm.state.collectAsState()
-    LazyColumn(
-        contentPadding = PaddingValues(20.dp, 28.dp, 20.dp, padding.calculateBottomPadding() + 24.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
-    ) {
-        item {
-            Text("Discover", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
-            Text("Search AniList", color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        item {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(value = state.query, onValueChange = vm::setQuery, modifier = Modifier.weight(1f), singleLine = true, placeholder = { Text("Anime or manga") }, leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null) })
-                Button(onClick = vm::search, enabled = state.query.isNotBlank() && !state.searching) { Text("Go") }
-            }
-        }
+    LazyColumn(contentPadding = PaddingValues(20.dp, 28.dp, 20.dp, padding.calculateBottomPadding() + 24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        item { Text("Discover", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold); Text("Search AniList", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+        item { Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) { OutlinedTextField(value = state.query, onValueChange = vm::setQuery, modifier = Modifier.weight(1f), singleLine = true, placeholder = { Text("Anime or manga") }, leadingIcon = { Icon(Icons.Outlined.Search, null) }); Button(onClick = vm::search, enabled = state.query.isNotBlank() && !state.searching) { Text("Go") } } }
         if (state.searching) item { CircularProgressIndicator() }
         if (state.results.isEmpty() && !state.searching) item { EmptyMessage(if (state.query.isBlank()) "Try a title such as Frieren or One Piece." else "No results found.") }
-        item { MediaSearchResults(state.results) }
+        if (state.results.isNotEmpty()) item { SearchResults(state.results) }
     }
 }
 
 @Composable
-private fun MediaSearchResults(media: List<MediaSummary>) {
-    if (media.isEmpty()) return
+private fun SearchResults(media: List<MediaSummary>) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         media.forEach { item ->
             Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(MaterialTheme.colorScheme.surfaceVariant).padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(58.dp).clip(RoundedCornerShape(10.dp)).background(MaterialTheme.colorScheme.surface)) {
-                    item.coverUrl?.let { AsyncImage(model = it, contentDescription = item.title, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
-                }
-                Spacer(Modifier.width(12.dp))
-                Column(Modifier.weight(1f)) {
-                    Text(item.title, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                    Text(item.averageScore?.let { "★ $it%" } ?: "AniList", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
-                }
+                Box(Modifier.size(58.dp).clip(RoundedCornerShape(10.dp)).background(MaterialTheme.colorScheme.surface)) { item.coverUrl?.let { AsyncImage(model = it, contentDescription = item.title, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop) } }
+                Spacer(Modifier.width(12.dp)); Column(Modifier.weight(1f)) { Text(item.title, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis); Text(item.averageScore?.let { "★ $it%" } ?: "AniList", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) }
             }
         }
     }
 }
 
-@Composable
-private fun LoadingRow() {
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        repeat(3) { Box(Modifier.width(126.dp).aspectRatio(.7f).clip(RoundedCornerShape(18.dp)).background(MaterialTheme.colorScheme.surfaceVariant)) }
-    }
-}
-
-@Composable
-private fun EmptyMessage(text: String) { Text(text, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 16.dp)) }
-
-@Composable
-private fun SectionTitle(title: String, action: String? = null) {
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-        action?.let { Text(it, color = MaterialTheme.colorScheme.primary, fontSize = 13.sp, fontWeight = FontWeight.Medium) }
-    }
-}
+@Composable private fun LoadingRow() { Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) { repeat(3) { Box(Modifier.width(126.dp).aspectRatio(.7f).clip(RoundedCornerShape(18.dp)).background(MaterialTheme.colorScheme.surfaceVariant)) } } }
+@Composable private fun EmptyMessage(text: String) { Text(text, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 16.dp)) }
+@Composable private fun SectionTitle(title: String, action: String? = null) { Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) { Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f)); action?.let { Text(it, color = MaterialTheme.colorScheme.primary, fontSize = 13.sp) } } }
 
 @Composable
 private fun MediaRow(media: List<MediaSummary>, airing: Boolean = false) {
-    LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp), contentPadding = PaddingValues(end = 12.dp)) {
+    LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         items(media, key = { it.id }) { item ->
             Column(Modifier.width(126.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
-                Box(Modifier.fillMaxWidth().aspectRatio(.7f).clip(RoundedCornerShape(18.dp)).background(MaterialTheme.colorScheme.surfaceVariant)) {
-                    item.coverUrl?.let { AsyncImage(model = it, contentDescription = item.title, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
-                }
+                Box(Modifier.fillMaxWidth().aspectRatio(.7f).clip(RoundedCornerShape(18.dp)).background(MaterialTheme.colorScheme.surfaceVariant)) { item.coverUrl?.let { AsyncImage(model = it, contentDescription = item.title, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop) } }
                 Text(item.title, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold)
-                val detail = when {
-                    airing && item.episodesOrChapters != null -> "Episode ${item.episodesOrChapters}"
-                    item.averageScore != null -> "★ ${item.averageScore}%"
-                    else -> "AniList"
-                }
-                Text(detail, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(if (airing && item.episodesOrChapters != null) "Episode ${item.episodesOrChapters}" else item.averageScore?.let { "★ $it%" } ?: "AniList", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     }
@@ -356,89 +233,44 @@ private fun MediaRow(media: List<MediaSummary>, airing: Boolean = false) {
 @Composable
 private fun PlaceholderScreen(title: String, eyebrow: String, description: String, action: String, padding: PaddingValues) {
     Column(Modifier.fillMaxSize().padding(start = 24.dp, top = 36.dp, end = 24.dp, bottom = padding.calculateBottomPadding()), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        Text(eyebrow, color = MaterialTheme.colorScheme.primary, fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.4.sp)
-        Text(title, style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
-        Text(description, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Button(onClick = {}, colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)) { Text(action) }
+        Text(eyebrow, color = MaterialTheme.colorScheme.primary, fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.4.sp); Text(title, style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold); Text(description, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant); Button(onClick = {}, colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)) { Text(action) }
     }
 }
 
 @Composable
-private fun ProfileScreen(theme: AppTheme, navigationStyle: NavigationStyle, onTheme: (AppTheme) -> Unit, onNavigationStyle: (NavigationStyle) -> Unit, contentPadding: PaddingValues) {
-    LazyColumn(contentPadding = PaddingValues(20.dp, 28.dp, 20.dp, contentPadding.calculateBottomPadding() + 24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+private fun ProfileScreen(theme: AppTheme, navigationStyle: NavigationStyle, onTheme: (AppTheme) -> Unit, onNavigationStyle: (NavigationStyle) -> Unit, padding: PaddingValues) {
+    LazyColumn(contentPadding = PaddingValues(20.dp, 28.dp, 20.dp, padding.calculateBottomPadding() + 24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         item { Text("Profile", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold) }
         item { Text("Browsing as guest", color = MaterialTheme.colorScheme.onSurfaceVariant) }
-        item {
-            SettingGroup("Appearance") {
-                Text("Theme", fontWeight = FontWeight.Medium)
-                ChoiceRow(AppTheme.entries.map { it.name }, theme.name) { onTheme(AppTheme.valueOf(it)) }
-                Text("Navigation", fontWeight = FontWeight.Medium)
-                ChoiceRow(NavigationStyle.entries.map { it.name }, navigationStyle.name) { onNavigationStyle(NavigationStyle.valueOf(it)) }
-            }
-        }
-        item { SettingGroup("Account") { SettingRow("Sign in with AniList", "Sync your library and profile") } }
-        item { SettingGroup("Privacy") { SettingRow("Your data stays yours", "No ads, analytics, or streaming features") } }
+        item { SettingGroup("Appearance") { Text("Theme", fontWeight = FontWeight.Medium); ChoiceRow(AppTheme.entries.map { it.name }, theme.name) { onTheme(AppTheme.valueOf(it)) }; Text("Navigation", fontWeight = FontWeight.Medium); ChoiceRow(NavigationStyle.entries.map { it.name }, navigationStyle.name) { onNavigationStyle(NavigationStyle.valueOf(it)) } } }
+        item { SettingGroup("Account") { Text("Sign in with AniList", fontWeight = FontWeight.Medium); Text("Sync your library and profile", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) } }
+        item { SettingGroup("Privacy") { Text("Your data stays yours", fontWeight = FontWeight.Medium); Text("No ads, analytics, or streaming features", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) } }
     }
 }
 
-@Composable
-private fun SettingGroup(title: String, content: @Composable () -> Unit) {
-    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
-            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) { content() }
-        }
-    }
-}
-
-@Composable
-private fun SettingRow(title: String, subtitle: String) {
-    Column(Modifier.fillMaxWidth()) {
-        Text(title, fontWeight = FontWeight.Medium)
-        Text(subtitle, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-    }
-}
+@Composable private fun SettingGroup(title: String, content: @Composable () -> Unit) { Column(verticalArrangement = Arrangement.spacedBy(10.dp)) { Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold); Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) { Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) { content() } } } }
 
 @Composable
 private fun ChoiceRow(options: List<String>, selected: String, onSelect: (String) -> Unit) {
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        options.forEach { option ->
-            val active = option == selected
-            Box(Modifier.clip(CircleShape).background(if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surface).clickable { onSelect(option) }.padding(horizontal = 14.dp, vertical = 10.dp), contentAlignment = Alignment.Center) {
-                Text(option, color = if (active) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface, fontSize = 12.sp)
-            }
-        }
-    }
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) { options.forEach { option -> val active = option == selected; Box(Modifier.clip(CircleShape).background(if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surface).clickable { onSelect(option) }.padding(horizontal = 14.dp, vertical = 10.dp)) { Text(option, color = if (active) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface, fontSize = 12.sp) } } }
 }
 
 @Composable
-private fun FloatingNavigationBar(selected: Destination, onDestination: (Destination) -> Unit, style: NavigationStyle, modifier: Modifier = Modifier) {
-    val surface = when (style) {
-        NavigationStyle.Off -> MaterialTheme.colorScheme.surface
-        NavigationStyle.Blur -> MaterialTheme.colorScheme.surface.copy(alpha = .94f)
-        NavigationStyle.Liquid -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .9f)
-    }
-    Row(modifier.fillMaxWidth().clip(RoundedCornerShape(28.dp)).background(surface).border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = .15f), RoundedCornerShape(28.dp)).padding(5.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
-        Destination.entries.forEach { destination -> NavigationItem(destination, selected == destination) { onDestination(destination) } }
-    }
+private fun BottomNavigation(selected: Destination, onSelect: (Destination) -> Unit, style: NavigationStyle, modifier: Modifier) {
+    val surface = when (style) { NavigationStyle.Off -> MaterialTheme.colorScheme.surface; NavigationStyle.Blur -> MaterialTheme.colorScheme.surface.copy(alpha = .95f); NavigationStyle.Liquid -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .9f) }
+    Row(modifier.fillMaxWidth().clip(RoundedCornerShape(28.dp)).background(surface).border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = .15f), RoundedCornerShape(28.dp)).padding(5.dp), horizontalArrangement = Arrangement.SpaceEvenly) { Destination.entries.forEach { NavigationItem(it, it == selected) { onSelect(it) } } }
 }
 
 @Composable
-private fun NavigationRail(selected: Destination, onDestination: (Destination) -> Unit, style: NavigationStyle) {
-    Column(Modifier.fillMaxHeight().width(96.dp).padding(12.dp).clip(RoundedCornerShape(28.dp)).background(if (style == NavigationStyle.Off) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .8f)).padding(vertical = 16.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Destination.entries.forEach { NavigationItem(it, selected == it) { onDestination(it) } }
-    }
+private fun NavigationRail(selected: Destination, onSelect: (Destination) -> Unit, style: NavigationStyle) {
+    Column(Modifier.fillMaxHeight().width(96.dp).padding(12.dp).clip(RoundedCornerShape(28.dp)).background(if (style == NavigationStyle.Off) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .8f)).padding(vertical = 16.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) { Destination.entries.forEach { NavigationItem(it, it == selected) { onSelect(it) } } }
 }
 
 @Composable
 private fun NavigationItem(destination: Destination, selected: Boolean, onClick: () -> Unit) {
     Column(Modifier.width(64.dp).height(64.dp).clip(RoundedCornerShape(18.dp)).clickable(onClick = onClick).padding(5.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-        Icon(destination.icon, destination.label, tint = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(26.dp))
-        Text(destination.label, fontSize = 10.sp, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal, color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+        Icon(destination.icon, destination.label, tint = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(26.dp)); Text(destination.label, fontSize = 10.sp, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal, color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
-private fun hikariColors(theme: AppTheme, systemDark: Boolean) = when {
-    theme == AppTheme.System && !systemDark -> lightColorScheme(primary = Color(0xFF7054B8), onPrimary = Color.White, background = Color(0xFFFAF8FF), surface = Color.White, surfaceVariant = Color(0xFFF0EDF5), onSurface = Color(0xFF1C1B20), onSurfaceVariant = Color(0xFF5F5B66))
-    else -> darkColorScheme(primary = if (theme == AppTheme.Amoled) Color(0xFFD2C1FF) else Color(0xFFC5B3FF), onPrimary = Color(0xFF2A1750), background = Color.Black, surface = if (theme == AppTheme.Amoled) Color.Black else Color(0xFF0C0C0F), surfaceVariant = if (theme == AppTheme.Aurora) Color(0xFF17151E) else Color(0xFF111114), onSurface = Color(0xFFF1EDF5), onSurfaceVariant = Color(0xFFBDB8C5), outline = Color(0xFF5A5660), errorContainer = Color(0xFF4A171A), onErrorContainer = Color(0xFFFFDAD6))
-}
+private fun hikariColors(theme: AppTheme, systemDark: Boolean) = if (theme == AppTheme.System && !systemDark) lightColorScheme(primary = Color(0xFF7054B8), onPrimary = Color.White, background = Color(0xFFFAF8FF), surface = Color.White, surfaceVariant = Color(0xFFF0EDF5), onSurface = Color(0xFF1C1B20), onSurfaceVariant = Color(0xFF5F5B66)) else darkColorScheme(primary = if (theme == AppTheme.Amoled) Color(0xFFD2C1FF) else Color(0xFFC5B3FF), onPrimary = Color(0xFF2A1750), background = Color.Black, surface = if (theme == AppTheme.Amoled) Color.Black else Color(0xFF0C0C0F), surfaceVariant = if (theme == AppTheme.Aurora) Color(0xFF17151E) else Color(0xFF111114), onSurface = Color(0xFFF1EDF5), onSurfaceVariant = Color(0xFFBDB8C5), outline = Color(0xFF5A5660), errorContainer = Color(0xFF4A171A), onErrorContainer = Color(0xFFFFDAD6))
