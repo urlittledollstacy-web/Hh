@@ -33,9 +33,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.runtime.hiltViewModel
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -47,7 +45,6 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import app.hikari.core.model.AiringScheduleEntry
-import app.hikari.core.model.LibraryEntry
 import app.hikari.core.model.MediaSummary
 import app.hikari.data.remote.AniListCalendarService
 import app.hikari.data.remote.AniListLibraryService
@@ -63,7 +60,7 @@ import java.util.Date
 import java.util.Locale
 import javax.inject.Inject
 
-private data class CalendarDay(val start: Long, val label: String, val number: String, val isToday: Boolean)
+data class CalendarDay(val start: Long, val label: String, val number: String, val isToday: Boolean)
 
 data class CalendarUiState(
     val days: List<CalendarDay> = emptyList(),
@@ -124,12 +121,11 @@ class CalendarViewModel @Inject constructor(
     }
 
     private fun buildDays(): List<CalendarDay> {
-        val today = Calendar.getInstance()
-        val todayStart = dayStart(today.timeInMillis)
+        val todayStart = dayStart(System.currentTimeMillis())
         val dayFormat = SimpleDateFormat("EEE", Locale.getDefault())
         return (0 until 14).map { offset ->
-            val millis = todayStart + offset * DAY_MILLIS
-            CalendarDay(millis, dayFormat.format(Date(millis)), SimpleDateFormat("d", Locale.getDefault()).format(Date(millis)), offset == 0)
+            val millis = (todayStart + offset * DAY_SECONDS) * 1000
+            CalendarDay(millis / 1000, dayFormat.format(Date(millis)), SimpleDateFormat("d", Locale.getDefault()).format(Date(millis)), offset == 0)
         }
     }
 
@@ -138,7 +134,7 @@ class CalendarViewModel @Inject constructor(
         return calendar.timeInMillis / 1000
     }
 
-    companion object { private const val DAY_MILLIS = 86_400_000L; private const val DAY_SECONDS = 86_400L }
+    companion object { private const val DAY_SECONDS = 86_400L }
 }
 
 @Composable
@@ -186,10 +182,7 @@ fun CalendarScreen(
             }
         }
         if (signedIn) item {
-            Row(
-                Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(MaterialTheme.colorScheme.surfaceVariant).padding(5.dp),
-                horizontalArrangement = Arrangement.spacedBy(5.dp),
-            ) {
+            Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(MaterialTheme.colorScheme.surfaceVariant).padding(5.dp), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
                 CalendarFilter("All", !state.showMine, Modifier.weight(1f)) { vm.setShowMine(false) }
                 CalendarFilter("My Watching", state.showMine, Modifier.weight(1f)) { vm.setShowMine(true) }
             }
@@ -211,17 +204,9 @@ fun CalendarScreen(
             }
         }
         if (state.entries.isNotEmpty()) {
-            item {
-                Text(
-                    if (state.showMine) "Your schedule" else "Airing schedule",
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold,
-                )
-            }
+            item { Text(if (state.showMine) "Your schedule" else "Airing schedule", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold) }
             items(state.entries, key = { it.id }) { entry ->
-                AiringCard(entry, onClick = {
-                    onMediaClick(MediaSummary(entry.mediaId, entry.mediaType, entry.title, entry.coverUrl, entry.averageScore, entry.totalEpisodes))
-                })
+                AiringCard(entry) { onMediaClick(MediaSummary(entry.mediaId, entry.mediaType, entry.title, entry.coverUrl, entry.averageScore, entry.totalEpisodes)) }
             }
         }
     }
@@ -229,21 +214,16 @@ fun CalendarScreen(
 
 @Composable
 private fun CalendarFilter(label: String, selected: Boolean, modifier: Modifier, onClick: () -> Unit) {
-    Box(
-        modifier.clip(RoundedCornerShape(12.dp)).background(if (selected) MaterialTheme.colorScheme.background else MaterialTheme.colorScheme.surfaceVariant).clickable(onClick = onClick).padding(vertical = 9.dp),
-        contentAlignment = Alignment.Center,
-    ) { Text(label, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal, color = MaterialTheme.colorScheme.onSurface) }
+    Box(modifier.clip(RoundedCornerShape(12.dp)).background(if (selected) MaterialTheme.colorScheme.background else MaterialTheme.colorScheme.surfaceVariant).clickable(onClick = onClick).padding(vertical = 9.dp), contentAlignment = Alignment.Center) {
+        Text(label, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal, color = MaterialTheme.colorScheme.onSurface)
+    }
 }
 
 @Composable
 private fun AiringCard(entry: AiringScheduleEntry, onClick: () -> Unit) {
     val time = remember(entry.airingAt) { SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date(entry.airingAt * 1000)) }
     val countdown = remember(entry.airingAt) { formatCountdown(entry.airingAt * 1000 - System.currentTimeMillis()) }
-    Card(
-        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
-        shape = RoundedCornerShape(22.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-    ) {
+    Card(Modifier.fillMaxWidth().clickable(onClick = onClick), shape = RoundedCornerShape(22.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
         Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
             AsyncImage(entry.coverUrl, contentDescription = entry.title, modifier = Modifier.size(76.dp, 106.dp).clip(RoundedCornerShape(16.dp)), contentScale = ContentScale.Crop)
             Spacer(Modifier.width(14.dp))
