@@ -46,10 +46,11 @@ class AniListGraphQlService @Inject constructor(
     }.getOrDefault(emptyList())
 
     suspend fun search(query: String, type: MediaType?, page: Int = 1): List<MediaSummary> = runCatching {
-        mediaPage(
-            "query(\$page:Int!, \$search:String!, \$type:MediaType){Page(page:\$page,perPage:20){media(search:\$search,type:\$type,sort:SEARCH_MATCH){id type title{userPreferred romaji english native} coverImage{large} averageScore episodes chapters}}}",
-            buildMap { put("page", page); put("search", query); put("type", type?.name) }, type,
-        )
+        val normalized = query.trim()
+        require(normalized.isNotBlank())
+        val typeClause = type?.let { ",type:${it.name}" }.orEmpty()
+        val searchQuery = "query(\$page:Int!, \$search:String!){Page(page:\$page,perPage:20){media(search:\$search$typeClause,sort:SEARCH_MATCH){id type title{userPreferred romaji english native} coverImage{large} averageScore episodes chapters}}}"
+        mediaPage(searchQuery, mapOf("page" to page, "search" to normalized), type)
     }.getOrDefault(emptyList())
 
     suspend fun viewerProfile(): AniListProfile {
