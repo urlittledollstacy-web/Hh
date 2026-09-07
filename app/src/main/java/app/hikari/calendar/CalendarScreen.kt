@@ -31,9 +31,11 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.hiltViewModel
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -50,6 +52,7 @@ import app.hikari.data.remote.AniListCalendarService
 import app.hikari.data.remote.AniListLibraryService
 import coil3.compose.AsyncImage
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -97,8 +100,8 @@ class CalendarViewModel @Inject constructor(
     fun refresh() = viewModelScope.launch {
         _state.value = _state.value.copy(loading = true, error = null)
         val days = buildDays()
-        val start = dayStart(days.firstOrNull()?.start ?: System.currentTimeMillis())
-        val end = dayStart(days.lastOrNull()?.start ?: System.currentTimeMillis()) + DAY_SECONDS
+        val start = days.firstOrNull()?.start ?: dayStart(System.currentTimeMillis())
+        val end = (days.lastOrNull()?.start ?: start) + DAY_SECONDS
         val result = runCatching { calendarApi.airingSchedule(start, end) }
         val library = runCatching { libraryApi.library(app.hikari.core.model.MediaType.ANIME) }.getOrNull()
         libraryIds = library?.entries.orEmpty().filter { it.status == "CURRENT" }.map { it.media.id }.toSet()
@@ -124,8 +127,8 @@ class CalendarViewModel @Inject constructor(
         val todayStart = dayStart(System.currentTimeMillis())
         val dayFormat = SimpleDateFormat("EEE", Locale.getDefault())
         return (0 until 14).map { offset ->
-            val millis = (todayStart + offset * DAY_SECONDS) * 1000
-            CalendarDay(millis / 1000, dayFormat.format(Date(millis)), SimpleDateFormat("d", Locale.getDefault()).format(Date(millis)), offset == 0)
+            val seconds = todayStart + offset * DAY_SECONDS
+            CalendarDay(seconds, dayFormat.format(Date(seconds * 1000)), SimpleDateFormat("d", Locale.getDefault()).format(Date(seconds * 1000)), offset == 0)
         }
     }
 
@@ -157,8 +160,7 @@ fun CalendarScreen(
                     Text("Never miss an episode", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 IconButton(onClick = vm::refresh, enabled = !state.loading) {
-                    if (state.loading) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-                    else Icon(Icons.Outlined.Refresh, "Refresh")
+                    if (state.loading) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp) else Icon(Icons.Outlined.Refresh, "Refresh")
                 }
             }
         }
@@ -168,9 +170,7 @@ fun CalendarScreen(
                     val day = state.days[index]
                     val selected = index == state.selectedDay
                     Column(
-                        Modifier.width(58.dp).clip(RoundedCornerShape(18.dp))
-                            .background(if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant)
-                            .clickable { vm.selectDay(index) }.padding(vertical = 11.dp),
+                        Modifier.width(58.dp).clip(RoundedCornerShape(18.dp)).background(if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant).clickable { vm.selectDay(index) }.padding(vertical = 11.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
                     ) {
                         Text(day.label.uppercase(), style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant)
@@ -221,8 +221,15 @@ private fun CalendarFilter(label: String, selected: Boolean, modifier: Modifier,
 
 @Composable
 private fun AiringCard(entry: AiringScheduleEntry, onClick: () -> Unit) {
+    var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(entry.id) {
+        while (true) {
+            now = System.currentTimeMillis()
+            delay(60_000)
+        }
+    }
     val time = remember(entry.airingAt) { SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date(entry.airingAt * 1000)) }
-    val countdown = remember(entry.airingAt) { formatCountdown(entry.airingAt * 1000 - System.currentTimeMillis()) }
+    val countdown = formatCountdown(entry.airingAt * 1000 - now)
     Card(Modifier.fillMaxWidth().clickable(onClick = onClick), shape = RoundedCornerShape(22.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
         Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
             AsyncImage(entry.coverUrl, contentDescription = entry.title, modifier = Modifier.size(76.dp, 106.dp).clip(RoundedCornerShape(16.dp)), contentScale = ContentScale.Crop)
@@ -231,7 +238,7 @@ private fun AiringCard(entry: AiringScheduleEntry, onClick: () -> Unit) {
                 Text(entry.title, maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 Text("Episode ${entry.episode}", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Text(time, fontWeight = FontWeight.SemiBold)
-                Text(if (entry.airingAt * 1000 <= System.currentTimeMillis()) "Airing now" else countdown, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                Text(if (entry.airingAt * 1000 <= now) "Airing now" else countdown, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
             }
             Column(horizontalAlignment = Alignment.End) {
                 entry.averageScore?.let { Text("★ ${it / 10f}", fontWeight = FontWeight.Bold) }
