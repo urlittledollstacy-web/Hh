@@ -37,6 +37,23 @@ class ProfileViewModel @Inject constructor(
     }
 }
 
+data class AniListProfile(
+    val id: Int,
+    val name: String,
+    val avatarUrl: String?,
+    val bannerUrl: String?,
+    val about: String?,
+    val animeCount: Int,
+    val episodesWatched: Int,
+    val daysWatched: Double,
+    val animeMeanScore: Double,
+    val mangaCount: Int,
+    val chaptersRead: Int,
+    val volumesRead: Int,
+    val daysRead: Double,
+    val mangaMeanScore: Double,
+)
+
 data class ProfileUiState(
     val profile: AniListProfile? = null,
     val loading: Boolean = false,
