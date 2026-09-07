@@ -62,8 +62,8 @@ class AniListGraphQlService @Inject constructor(
         AniListProfile(
             id = viewer.getInt("id"), name = viewer.getString("name"),
             avatarUrl = viewer.optJSONObject("avatar")?.optString("large"),
-            bannerUrl = viewer.optString("bannerImage").takeIf { it.isNotBlank() },
-            about = viewer.optString("about").takeIf { it.isNotBlank() },
+            bannerUrl = viewer.optionalText("bannerImage"),
+            about = viewer.optionalText("about"),
             animeCount = anime.optInt("count"), episodesWatched = anime.optInt("episodesWatched"),
             daysWatched = anime.optInt("minutesWatched") / 1440.0, animeMeanScore = anime.optDouble("meanScore", 0.0),
             mangaCount = manga.optInt("count"), chaptersRead = manga.optInt("chaptersRead"), volumesRead = manga.optInt("volumesRead"),
@@ -90,6 +90,8 @@ class AniListGraphQlService @Inject constructor(
         }
     }
 }
+
+private fun JSONObject.optionalText(key: String): String? = if (!has(key) || isNull(key)) null else optString(key).takeIf { it.isNotBlank() && it != "null" }
 
 private fun JSONArray.toMediaList(requestedType: MediaType?): List<MediaSummary> = List(length()) { index ->
     val item = getJSONObject(index)
