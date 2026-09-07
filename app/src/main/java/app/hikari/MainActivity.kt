@@ -82,6 +82,8 @@ import app.hikari.profile.ProfileDetails
 import coil3.compose.AsyncImage
 import dagger.hilt.android.AndroidEntryPoint
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -150,13 +152,81 @@ class HomeViewModel @Inject constructor(private val api: AniListGraphQlService) 
     }
 }
 
-data class SearchUiState(val query: String = "", val results: List<MediaSummary> = emptyList(), val searching: Boolean = false)
+enum class SearchMediaFilter(val label: String, val type: MediaType?) {
+    ALL("All", null), ANIME("Anime", MediaType.ANIME), MANGA("Manga", MediaType.MANGA)
+}
+
+data class SearchUiState(
+    val query: String = "",
+    val results: List<MediaSummary> = emptyList(),
+    val searching: Boolean = false,
+    val loadingMore: Boolean = false,
+    val page: Int = 1,
+    val hasMore: Boolean = false,
+    val filter: SearchMediaFilter = SearchMediaFilter.ALL,
+)
+
 @HiltViewModel
 class SearchViewModel @Inject constructor(private val api: AniListGraphQlService) : ViewModel() {
     private val _state = MutableStateFlow(SearchUiState())
     val state: StateFlow<SearchUiState> = _state.asStateFlow()
-    fun setQuery(value: String) { _state.value = _state.value.copy(query = value) }
-    fun search() = viewModelScope.launch { val q = _state.value.query.trim(); if (q.isBlank()) return@launch; _state.value = _state.value.copy(searching = true); _state.value = _state.value.copy(results = api.search(q, MediaType.ANIME), searching = false) }
+    private var searchJob: Job? = null
+
+    fun setQuery(value: String) {
+        val normalized = value.take(80)
+        _state.value = _state.value.copy(query = normalized, results = emptyList(), page = 1, hasMore = false)
+        searchJob?.cancel()
+        if (normalized.trim().isBlank()) return
+        searchJob = viewModelScope.launch {
+            delay(350)
+            searchFirstPage()
+        }
+    }
+
+    fun setFilter(filter: SearchMediaFilter) {
+        if (_state.value.filter == filter) return
+        _state.value = _state.value.copy(filter = filter, results = emptyList(), page = 1, hasMore = false)
+        if (_state.value.query.trim().isNotBlank()) {
+            searchJob?.cancel()
+            searchJob = viewModelScope.launch {
+                delay(180)
+                searchFirstPage()
+            }
+        }
+    }
+
+    fun searchNow() {
+        if (_state.value.query.trim().isBlank()) return
+        searchJob?.cancel()
+        searchJob = viewModelScope.launch { searchFirstPage() }
+    }
+
+    fun loadMore() {
+        val current = _state.value
+        if (current.loadingMore || current.searching || !current.hasMore || current.query.trim().isBlank()) return
+        viewModelScope.launch {
+            val page = current.page + 1
+            _state.value = _state.value.copy(loadingMore = true)
+            val next = runCatching { api.search(current.query.trim(), current.filter.type, page) }.getOrDefault(emptyList())
+            val merged = (_state.value.results + next).distinctBy { it.id }
+            _state.value = _state.value.copy(results = merged, page = page, hasMore = next.size >= 20, loadingMore = false)
+        }
+    }
+
+    private suspend fun searchFirstPage() {
+        val current = _state.value
+        val query = current.query.trim()
+        if (query.isBlank()) return
+        _state.value = _state.value.copy(searching = true, loadingMore = false, page = 1, hasMore = false)
+        val results = runCatching { api.search(query, current.filter.type, 1) }.getOrDefault(emptyList())
+        if (_state.value.query.trim() != query) return
+        _state.value = _state.value.copy(results = results, searching = false, page = 1, hasMore = results.size >= 20)
+    }
+
+    override fun onCleared() {
+        searchJob?.cancel()
+        super.onCleared()
+    }
 }
 
 @Composable
@@ -208,16 +278,107 @@ private fun HomeScreen(padding: PaddingValues, onSearch: () -> Unit, vm: HomeVie
 @Composable
 private fun DiscoverScreen(padding: PaddingValues, vm: SearchViewModel = hiltViewModel()) {
     val state by vm.state.collectAsState()
-    LazyColumn(contentPadding = PaddingValues(20.dp, 28.dp, 20.dp, padding.calculateBottomPadding() + 24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        item { Text("Discover", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold); Text("Search AniList", color = MaterialTheme.colorScheme.onSurfaceVariant) }
-        item { Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) { OutlinedTextField(value = state.query, onValueChange = vm::setQuery, modifier = Modifier.weight(1f), singleLine = true, placeholder = { Text("Anime or manga") }, leadingIcon = { Icon(Icons.Outlined.Search, null) }); Button(onClick = vm::search, enabled = state.query.isNotBlank() && !state.searching) { Text("Go") } } }
-        if (state.searching) item { CircularProgressIndicator() }
-        if (state.results.isEmpty() && !state.searching) item { EmptyMessage(if (state.query.isBlank()) "Try a title such as Frieren or One Piece." else "No results found.") }
-        if (state.results.isNotEmpty()) item { SearchResults(state.results) }
+    LazyColumn(contentPadding = PaddingValues(20.dp, 28.dp, 20.dp, padding.calculateBottomPadding() + 24.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        item {
+            Text("Discover", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
+            Text("Search AniList instantly", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        item {
+            OutlinedTextField(
+                value = state.query,
+                onValueChange = vm::setQuery,
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                placeholder = { Text("Search anime, manga...") },
+                leadingIcon = { Icon(Icons.Outlined.Search, "Search") },
+                trailingIcon = {
+                    if (state.query.isNotBlank()) {
+                        TextButton(onClick = { vm.setQuery("") }) { Text("Clear") }
+                    }
+                },
+            )
+        }
+        item {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                SearchMediaFilter.entries.forEach { filter ->
+                    val active = filter == state.filter
+                    Box(
+                        Modifier
+                            .clip(CircleShape)
+                            .background(if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant)
+                            .clickable { vm.setFilter(filter) }
+                            .padding(horizontal = 16.dp, vertical = 10.dp)
+                    ) {
+                        Text(
+                            filter.label,
+                            color = if (active) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
+                            fontSize = 12.sp,
+                            fontWeight = if (active) FontWeight.Bold else FontWeight.Normal,
+                        )
+                    }
+                }
+            }
+        }
+        if (state.searching) item { Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) { CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp) } }
+        if (state.query.isBlank()) {
+            item {
+                EmptyMessage("Start typing — Hikari will show suggestions automatically.")
+            }
+        } else if (!state.searching && state.results.isEmpty()) {
+            item { EmptyMessage("No results found for \"${state.query.trim()}\".") }
+        } else if (state.results.isNotEmpty()) {
+            item {
+                Text(
+                    if (state.query.trim().length == 1) "Suggestions" else "Results",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                )
+            }
+            item { SearchResults(state.results) }
+            if (state.hasMore) {
+                item {
+                    Button(onClick = vm::loadMore, enabled = !state.loadingMore, modifier = Modifier.fillMaxWidth()) {
+                        if (state.loadingMore) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp) else Text("Load more")
+                    }
+                }
+            }
+        }
     }
 }
 
-@Composable private fun SearchResults(media: List<MediaSummary>) { Column(verticalArrangement = Arrangement.spacedBy(10.dp)) { media.forEach { item -> Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(MaterialTheme.colorScheme.surfaceVariant).padding(10.dp), verticalAlignment = Alignment.CenterVertically) { Box(Modifier.size(58.dp).clip(RoundedCornerShape(10.dp)).background(MaterialTheme.colorScheme.surface)) { item.coverUrl?.let { AsyncImage(model = it, contentDescription = item.title, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop) } }; Spacer(Modifier.width(12.dp)); Column(Modifier.weight(1f)) { Text(item.title, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis); Text(item.averageScore?.let { "★ $it%" } ?: "AniList", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) } } } } }
+@Composable
+private fun SearchResults(media: List<MediaSummary>) {
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        media.forEach { item ->
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                    .padding(10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(Modifier.size(58.dp).clip(RoundedCornerShape(10.dp)).background(MaterialTheme.colorScheme.surface)) {
+                    item.coverUrl?.let { AsyncImage(model = it, contentDescription = item.title, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
+                }
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(item.title, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    Text(
+                        buildString {
+                            append(if (item.type == MediaType.ANIME) "Anime" else "Manga")
+                            item.averageScore?.let { append("  •  ★ $it%") }
+                            item.episodesOrChapters?.let { append("  •  ${if (item.type == MediaType.ANIME) "$it eps" else "$it ch"}") }
+                        },
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+    }
+}
+
 @Composable private fun LoadingRow() { Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) { repeat(3) { Box(Modifier.width(126.dp).aspectRatio(.7f).clip(RoundedCornerShape(18.dp)).background(MaterialTheme.colorScheme.surfaceVariant)) } } }
 @Composable private fun EmptyMessage(text: String) { Text(text, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 16.dp)) }
 @Composable private fun SectionTitle(title: String, action: String? = null) { Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) { Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f)); action?.let { Text(it, color = MaterialTheme.colorScheme.primary, fontSize = 13.sp) } } }
