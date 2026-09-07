@@ -5,8 +5,6 @@ import android.content.Intent
 import android.net.Uri
 import androidx.browser.customtabs.CustomTabsIntent
 import app.hikari.BuildConfig
-import java.security.SecureRandom
-import java.util.Base64
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -18,8 +16,6 @@ class AniListAuthManager @Inject constructor(
         val clientId = BuildConfig.ANILIST_CLIENT_ID
         if (clientId.isBlank()) return AuthStartResult.MissingClientId
 
-        val state = randomState()
-        tokenStore.saveOAuthState(state)
         val uri = Uri.Builder()
             .scheme("https")
             .authority("anilist.co")
@@ -28,9 +24,7 @@ class AniListAuthManager @Inject constructor(
             .appendPath("oauth")
             .appendPath("authorize")
             .appendQueryParameter("client_id", clientId)
-            .appendQueryParameter("redirect_uri", REDIRECT_URI)
             .appendQueryParameter("response_type", "token")
-            .appendQueryParameter("state", state)
             .build()
 
         CustomTabsIntent.Builder().build().launchUrl(context, uri)
@@ -49,14 +43,6 @@ class AniListAuthManager @Inject constructor(
             }
             .toMap()
 
-        val expectedState = tokenStore.oauthState()
-        val returnedState = values["state"]
-        if (expectedState.isNullOrBlank() || returnedState != expectedState) {
-            tokenStore.clearOAuthState()
-            return AuthCallbackResult.Error("AniList login could not be verified. Please try again.")
-        }
-
-        tokenStore.clearOAuthState()
         values["error"]?.let { error ->
             return AuthCallbackResult.Error(values["error_description"] ?: error)
         }
@@ -68,12 +54,6 @@ class AniListAuthManager @Inject constructor(
     }
 
     fun logout() = tokenStore.clear()
-
-    private fun randomState(): String {
-        val bytes = ByteArray(32)
-        SecureRandom().nextBytes(bytes)
-        return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes)
-    }
 
     companion object {
         const val REDIRECT_URI = "hikari://oauth"
