@@ -19,27 +19,32 @@ class AniListCalendarService @Inject constructor(
     private val tokenStore: SecureTokenStore,
 ) {
     suspend fun airingSchedule(from: Long, to: Long): List<AiringScheduleEntry> = withContext(Dispatchers.IO) {
-        val query = "query(\$from:Int!,\$to:Int!){Page(page:1,perPage:50){airingSchedules(airingAt_greater:\$from,airingAt_lesser:\$to,sort:TIME_ASC){id airingAt timeUntilAiring episode media{id type title{userPreferred english romaji native} coverImage{large} averageScore episodes chapters}}}}"
         runCatching {
-            val data = execute(query, mapOf("from" to from, "to" to to))
-                .getJSONObject("data").getJSONObject("Page").getJSONArray("airingSchedules")
-            List(data.length()) { index ->
-                val item = data.getJSONObject(index)
-                val media = item.getJSONObject("media")
-                val title = preferredTitle(media.optJSONObject("title"))
-                AiringScheduleEntry(
-                    id = item.getLong("id"),
-                    airingAt = item.getLong("airingAt"),
-                    timeUntilAiring = item.optLong("timeUntilAiring"),
-                    episode = item.optInt("episode"),
-                    mediaId = media.getInt("id"),
-                    mediaType = runCatching { MediaType.valueOf(media.optString("type")) }.getOrDefault(MediaType.ANIME),
-                    title = title,
-                    coverUrl = media.optJSONObject("coverImage")?.optString("large")?.takeIf { it.isNotBlank() },
-                    averageScore = media.optInt("averageScore").takeIf { it > 0 },
-                    totalEpisodes = media.optInt("episodes").takeIf { it > 0 },
-                )
+            val results = mutableListOf<AiringScheduleEntry>()
+            for (page in 1..6) {
+                val query = "query(\$page:Int!,\$from:Int!,\$to:Int!){Page(page:\$page,perPage:50){pageInfo{hasNextPage}airingSchedules(airingAt_greater:\$from,airingAt_lesser:\$to,sort:TIME_ASC){id airingAt timeUntilAiring episode media{id type title{userPreferred english romaji native} coverImage{large} averageScore episodes chapters}}}}"
+                val pageObject = execute(query, mapOf("page" to page, "from" to from, "to" to to))
+                    .getJSONObject("data").getJSONObject("Page")
+                val data = pageObject.getJSONArray("airingSchedules")
+                for (index in 0 until data.length()) {
+                    val item = data.getJSONObject(index)
+                    val media = item.getJSONObject("media")
+                    results += AiringScheduleEntry(
+                        id = item.getLong("id"),
+                        airingAt = item.getLong("airingAt"),
+                        timeUntilAiring = item.optLong("timeUntilAiring"),
+                        episode = item.optInt("episode"),
+                        mediaId = media.getInt("id"),
+                        mediaType = runCatching { MediaType.valueOf(media.optString("type")) }.getOrDefault(MediaType.ANIME),
+                        title = preferredTitle(media.optJSONObject("title")),
+                        coverUrl = media.optJSONObject("coverImage")?.optString("large")?.takeIf { it.isNotBlank() },
+                        averageScore = media.optInt("averageScore").takeIf { it > 0 },
+                        totalEpisodes = media.optInt("episodes").takeIf { it > 0 },
+                    )
+                }
+                if (!pageObject.getJSONObject("pageInfo").optBoolean("hasNextPage")) break
             }
+            results.distinctBy { it.id }.sortedBy { it.airingAt }
         }.getOrDefault(emptyList())
     }
 
