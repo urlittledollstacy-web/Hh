@@ -42,6 +42,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -62,7 +63,15 @@ class HomeRecommendationsViewModel @Inject constructor(
     private val _state = MutableStateFlow(HomeRecommendationsUiState())
     val state: StateFlow<HomeRecommendationsUiState> = _state.asStateFlow()
 
-    init { refresh() }
+    init {
+        refresh()
+        viewModelScope.launch {
+            while (true) {
+                delay(10 * 60_000L)
+                refresh()
+            }
+        }
+    }
 
     fun refresh() = viewModelScope.launch {
         if (tokenStore.accessToken() == null) {

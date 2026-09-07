@@ -149,7 +149,23 @@ data class HomeUiState(val trending: List<MediaSummary> = emptyList(), val airin
 class HomeViewModel @Inject constructor(private val api: AniListGraphQlService) : ViewModel() {
     private val _state = MutableStateFlow(HomeUiState())
     val state: StateFlow<HomeUiState> = _state.asStateFlow()
-    init { refresh() }
+
+    init {
+        refresh()
+        viewModelScope.launch {
+            var trendTick = 0
+            while (true) {
+                delay(60_000)
+                refreshAiring()
+                trendTick++
+                if (trendTick >= 5) {
+                    trendTick = 0
+                    refreshTrendingSilently()
+                }
+            }
+        }
+    }
+
     fun refresh() = viewModelScope.launch {
         _state.value = _state.value.copy(refreshing = true, error = null)
         val (trending, airing) = coroutineScope {
@@ -157,7 +173,23 @@ class HomeViewModel @Inject constructor(private val api: AniListGraphQlService) 
             val airingDeferred = async { runCatching { api.airingSoon() }.getOrDefault(emptyList()) }
             trendingDeferred.await() to airingDeferred.await()
         }
-        _state.value = HomeUiState(trending, airing, false, false, if (trending.isEmpty() && airing.isEmpty()) "AniList is unavailable right now. Try again in a moment." else null)
+        _state.value = HomeUiState(
+            trending = trending,
+            airing = airing,
+            loading = false,
+            refreshing = false,
+            error = if (trending.isEmpty() && airing.isEmpty()) "AniList is unavailable right now. Try again in a moment." else null,
+        )
+    }
+
+    private fun refreshAiring() = viewModelScope.launch {
+        val airing = runCatching { api.airingSoon() }.getOrDefault(emptyList())
+        _state.value = _state.value.copy(airing = airing, loading = false)
+    }
+
+    private fun refreshTrendingSilently() = viewModelScope.launch {
+        val trending = runCatching { api.trending(MediaType.ANIME) }.getOrDefault(emptyList())
+        _state.value = _state.value.copy(trending = trending, loading = false)
     }
 }
 
@@ -304,7 +336,7 @@ private fun HikariApp(signedIn: Boolean, onSignIn: () -> Unit, onSignOut: () -> 
 @Composable
 private fun AppContent(destination: Destination, theme: AppTheme, navStyle: NavigationStyle, signedIn: Boolean, onSignIn: () -> Unit, onSignOut: () -> Unit, onTheme: (AppTheme) -> Unit, onNavStyle: (NavigationStyle) -> Unit, padding: PaddingValues, onDestination: (Destination) -> Unit, onMediaClick: (MediaSummary) -> Unit) {
     when (destination) {
-        Destination.Home -> HomeScreen(padding, onSearch = { onDestination(Destination.Discover) }, onMediaClick = onMediaClick)
+        Destination.Home -> HomeScreen(padding, onSearch = { onDestination(Destination.Discover) }, onCalendar = { onDestination(Destination.Calendar) }, onMediaClick = onMediaClick)
         Destination.Discover -> DiscoverScreen(padding, onMediaClick)
         Destination.Library -> LibraryScreen(signedIn, padding)
         Destination.Calendar -> CalendarScreen(padding, onMediaClick, signedIn)
@@ -313,13 +345,18 @@ private fun AppContent(destination: Destination, theme: AppTheme, navStyle: Navi
 }
 
 @Composable
-private fun HomeScreen(padding: PaddingValues, onSearch: () -> Unit, onMediaClick: (MediaSummary) -> Unit, vm: HomeViewModel = hiltViewModel()) {
+private fun HomeScreen(padding: PaddingValues, onSearch: () -> Unit, onCalendar: () -> Unit, onMediaClick: (MediaSummary) -> Unit, vm: HomeViewModel = hiltViewModel()) {
     val state by vm.state.collectAsState()
     LazyColumn(contentPadding = PaddingValues(20.dp, 26.dp, 20.dp, padding.calculateBottomPadding() + 20.dp), verticalArrangement = Arrangement.spacedBy(22.dp)) {
         item { Row(verticalAlignment = Alignment.CenterVertically) { Column(Modifier.weight(1f)) { Text("Good evening", color = MaterialTheme.colorScheme.onSurfaceVariant); Text("Find your next favorite.", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold) }; Box(Modifier.size(44.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primary), contentAlignment = Alignment.Center) { Text("H", color = MaterialTheme.colorScheme.onPrimary, fontWeight = FontWeight.Bold) } } }
         item { Row(Modifier.fillMaxWidth().height(58.dp).clip(RoundedCornerShape(18.dp)).background(MaterialTheme.colorScheme.surfaceVariant).clickable(onClick = onSearch).padding(horizontal = 15.dp), verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Outlined.Search, "Search", tint = MaterialTheme.colorScheme.onSurfaceVariant); Spacer(Modifier.width(10.dp)); Text("Search anime, manga, people...", color = MaterialTheme.colorScheme.onSurfaceVariant) } }
         if (state.error != null) item { Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)) { Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) { Text(state.error.orEmpty(), Modifier.weight(1f), color = MaterialTheme.colorScheme.onErrorContainer); TextButton(onClick = vm::refresh) { Text("Retry") } } } }
-        item { SectionTitle("Airing soon", "See all") }
+        item {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text("Airing soon", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                TextButton(onClick = onCalendar) { Text("See all") }
+            }
+        }
         item { if (state.loading) LoadingRow() else if (state.airing.isEmpty()) EmptyMessage("No upcoming episodes found.") else MediaRow(state.airing, true, onMediaClick) }
         item { Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) { Text("Trending now", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f)); IconButton(onClick = vm::refresh, enabled = !state.refreshing) { if (state.refreshing) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp) else Icon(Icons.Outlined.Refresh, "Refresh") } } }
         item { if (state.loading) LoadingRow() else if (state.trending.isEmpty()) EmptyMessage("No trending anime found.") else MediaRow(state.trending, false, onMediaClick) }

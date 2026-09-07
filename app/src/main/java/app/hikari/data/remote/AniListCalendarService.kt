@@ -18,6 +18,28 @@ class AniListCalendarService @Inject constructor(
     private val client: OkHttpClient,
     private val tokenStore: SecureTokenStore,
 ) {
+    suspend fun airingSoon(limit: Int = 12, now: Long = System.currentTimeMillis() / 1000): List<AiringScheduleEntry> = withContext(Dispatchers.IO) {
+        val query = "query(\$now:Int!,\$limit:Int!){Page(page:1,perPage:100){airingSchedules(notYetAired:true,airingAt_greater:\$now,sort:TIME_ASC){id airingAt timeUntilAiring episode media{id title{userPreferred english romaji native} coverImage{large} averageScore episodes}}}}"
+        val data = execute(query, mapOf("now" to now, "limit" to limit))
+            .getJSONObject("data").getJSONObject("Page").getJSONArray("airingSchedules")
+        List(minOf(data.length(), limit)) { index ->
+            val item = data.getJSONObject(index)
+            val media = item.getJSONObject("media")
+            AiringScheduleEntry(
+                id = item.getLong("id"),
+                airingAt = item.getLong("airingAt"),
+                timeUntilAiring = item.optLong("timeUntilAiring"),
+                episode = item.optInt("episode"),
+                mediaId = media.getInt("id"),
+                mediaType = MediaType.ANIME,
+                title = preferredTitle(media.optJSONObject("title")),
+                coverUrl = media.optJSONObject("coverImage")?.optString("large")?.takeIf { it.isNotBlank() },
+                averageScore = media.optInt("averageScore").takeIf { it > 0 },
+                totalEpisodes = media.optInt("episodes").takeIf { it > 0 },
+            )
+        }
+    }
+
     suspend fun airingSchedule(from: Long, to: Long): List<AiringScheduleEntry> = withContext(Dispatchers.IO) {
         val results = mutableListOf<AiringScheduleEntry>()
         // Keep the calendar responsive: four pages cover a broad set of currently
