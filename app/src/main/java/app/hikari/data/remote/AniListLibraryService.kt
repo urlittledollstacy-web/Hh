@@ -4,6 +4,7 @@ import app.hikari.core.auth.SecureTokenStore
 import app.hikari.core.model.LibraryEntry
 import app.hikari.core.model.MediaSummary
 import app.hikari.core.model.MediaType
+import app.hikari.core.model.ScoreFormat
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
@@ -14,14 +15,20 @@ import org.json.JSONObject
 import javax.inject.Inject
 import javax.inject.Singleton
 
+data class LibrarySnapshot(
+    val entries: List<LibraryEntry>,
+    val scoreFormat: ScoreFormat,
+)
+
 @Singleton
 class AniListLibraryService @Inject constructor(
     private val client: OkHttpClient,
     private val tokenStore: SecureTokenStore,
 ) {
-    suspend fun library(type: MediaType): List<LibraryEntry> = withContext(Dispatchers.IO) {
+    suspend fun library(type: MediaType): LibrarySnapshot = withContext(Dispatchers.IO) {
         val query = "query(\$userId:Int!,\$type:MediaType!){MediaListCollection(userId:\$userId,type:\$type){lists{name entries{id status score progress media{id type title{userPreferred romaji english native} coverImage{large} averageScore episodes chapters}}}}}"
-        val viewer = execute("query{Viewer{id}}", emptyMap()).getJSONObject("data").getJSONObject("Viewer")
+        val viewer = execute("query{Viewer{id mediaListOptions{scoreFormat}}}", emptyMap()).getJSONObject("data").getJSONObject("Viewer")
+        val scoreFormat = parseScoreFormat(viewer.getJSONObject("mediaListOptions").optString("scoreFormat"))
         val lists = execute(query, mapOf("userId" to viewer.getInt("id"), "type" to type.name))
             .getJSONObject("data").getJSONObject("MediaListCollection").getJSONArray("lists")
 
@@ -57,7 +64,7 @@ class AniListLibraryService @Inject constructor(
                 )
             }
         }
-        return@withContext unique.values.toList()
+        return@withContext LibrarySnapshot(unique.values.toList(), scoreFormat)
     }
 
     suspend fun updateEntry(entry: LibraryEntry, status: String, progress: Int, score: Double) = withContext(Dispatchers.IO) {
@@ -72,6 +79,14 @@ class AniListLibraryService @Inject constructor(
                 "progress" to progress,
             ),
         )
+    }
+
+    private fun parseScoreFormat(value: String): ScoreFormat = when (value) {
+        "POINT_10_DECIMAL" -> ScoreFormat.POINT_10_DECIMAL
+        "POINT_10" -> ScoreFormat.POINT_10
+        "POINT_5" -> ScoreFormat.POINT_5
+        "POINT_3" -> ScoreFormat.POINT_3
+        else -> ScoreFormat.POINT_100
     }
 
     private fun execute(query: String, variables: Map<String, Any?>): JSONObject {
