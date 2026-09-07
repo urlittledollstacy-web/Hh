@@ -28,7 +28,7 @@ jobs:
           cache: gradle
 
       - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
 
       - name: Install Android SDK packages
         run: |
@@ -39,19 +39,28 @@ jobs:
             "build-tools;34.0.0"
           yes | sdkmanager --licenses >/dev/null || true
 
+      - name: Install Gradle
+        run: |
+          curl -fsSL -o /tmp/gradle.zip https://services.gradle.org/distributions/gradle-8.14.4-bin.zip
+          unzip -q /tmp/gradle.zip -d /tmp/gradle
+          echo "/tmp/gradle/gradle-8.14.4/bin" >> "$GITHUB_PATH"
+
+      - name: Prepare Android build environment
+        run: |
+          sed -i "s|^org.gradle.java.home=.*$|org.gradle.java.home=$JAVA_HOME|" gradle.properties
+          printf 'sdk.dir=%s\n' "$ANDROID_SDK_ROOT" > local.properties
+          grep '^org.gradle.java.home=' gradle.properties
+          grep '^sdk.dir=' local.properties
+
       - name: Verify toolchain
         run: |
           java -version
-          ./gradlew --version
+          gradle --version
+          ls -la
           ls -la app
 
-      - name: Use the GitHub Actions JDK
-        run: |
-          sed -i "s|^org.gradle.java.home=.*$|org.gradle.java.home=$JAVA_HOME|" gradle.properties
-          grep '^org.gradle.java.home=' gradle.properties
-
       - name: Build debug APK
-        run: ./gradlew :app:assembleDebug --no-daemon --stacktrace --info
+        run: gradle :app:assembleDebug --no-daemon --stacktrace --info
 
       - name: Upload debug APK
         if: always()
