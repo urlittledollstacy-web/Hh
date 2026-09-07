@@ -1,0 +1,18 @@
+name: Apply Home Live Updates
+on:
+  push:
+    branches:
+      - codex/create-personal-anilist-android-client
+permissions:
+  contents: write
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: codex/create-personal-anilist-android-client
+      - name: Apply patch
+        run: python3 .github/apply_home_live_updates.py
