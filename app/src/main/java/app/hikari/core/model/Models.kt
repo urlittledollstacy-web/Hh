@@ -1,0 +1,25 @@
+package app.hikari.core.model
+
+enum class MediaType { ANIME, MANGA }
+
+data class MediaSummary(
+    val id: Int,
+    val type: MediaType,
+    val title: String,
+    val coverUrl: String?,
+    val averageScore: Int?,
+    val episodesOrChapters: Int?,
+)
+
+data class MediaDetail(
+    val summary: MediaSummary,
+    val description: String?,
+    val status: String?,
+    val genres: List<String>,
+    val popularity: Int?,
+    val favourites: Int?,
+)
+
+data class AniListUser(val id: Int, val name: String, val avatarUrl: String?, val about: String?)
+
+data class LibraryEntry(val id: Int, val media: MediaSummary, val status: String, val progress: Int, val score: Double?)

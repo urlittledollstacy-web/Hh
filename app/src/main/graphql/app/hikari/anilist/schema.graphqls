@@ -1,0 +1,7 @@
+schema { query: Query }
+type Query { Page(page: Int, perPage: Int): Page }
+type Page { media: [Media] }
+type Media { id: Int! type: MediaType! title: MediaTitle coverImage: MediaCoverImage averageScore: Int episodes: Int chapters: Int }
+type MediaTitle { romaji: String english: String }
+type MediaCoverImage { large: String }
+enum MediaType { ANIME MANGA }

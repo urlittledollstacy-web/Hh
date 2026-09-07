@@ -1,0 +1,28 @@
+package app.hikari.di
+
+import android.content.Context
+import androidx.room.Room
+import app.hikari.data.DefaultMediaRepository
+import app.hikari.data.MediaRepository
+import app.hikari.data.local.HikariDatabase
+import app.hikari.data.local.MediaCacheDao
+import dagger.Binds
+import dagger.Module
+import dagger.Provides
+import dagger.hilt.InstallIn
+import dagger.hilt.android.qualifiers.ApplicationContext
+import dagger.hilt.components.SingletonComponent
+import okhttp3.OkHttpClient
+import javax.inject.Singleton
+
+@Module
+@InstallIn(SingletonComponent::class)
+abstract class RepositoryModule { @Binds abstract fun bindMediaRepository(implementation: DefaultMediaRepository): MediaRepository }
+
+@Module
+@InstallIn(SingletonComponent::class)
+object StorageModule {
+    @Provides @Singleton fun database(@ApplicationContext context: Context): HikariDatabase = Room.databaseBuilder(context, HikariDatabase::class.java, "hikari.db").fallbackToDestructiveMigration().build()
+    @Provides fun mediaCacheDao(database: HikariDatabase): MediaCacheDao = database.mediaCacheDao()
+    @Provides @Singleton fun okHttpClient(): OkHttpClient = OkHttpClient.Builder().build()
+}
