@@ -23,19 +23,19 @@ class AniListGraphQlService @Inject constructor(
 ) {
     suspend fun trending(type: MediaType, page: Int = 1): List<MediaSummary> = runCatching {
         mediaPage(
-            "query(\$page:Int!, \$type:MediaType!){Page(page:\$page,perPage:20){media(type:\$type,sort:TRENDING_DESC){id type title{romaji english} coverImage{large} averageScore episodes chapters}}}",
+            "query(\$page:Int!, \$type:MediaType!){Page(page:\$page,perPage:20){media(type:\$type,sort:TRENDING_DESC){id type title{userPreferred romaji english native} coverImage{large} averageScore episodes chapters}}}",
             mapOf("page" to page, "type" to type.name), type,
         )
     }.getOrDefault(emptyList())
 
     suspend fun airingSoon(page: Int = 1, perPage: Int = 12, now: Long = System.currentTimeMillis() / 1000): List<MediaSummary> = runCatching {
-        val query = "query(\$page:Int!, \$perPage:Int!, \$now:Int!){Page(page:\$page,perPage:\$perPage){airingSchedules(airingAt_greater:\$now,sort:TIME_ASC){episode airingAt media{id type title{romaji english} coverImage{large} averageScore episodes chapters}}}}"
+        val query = "query(\$page:Int!, \$perPage:Int!, \$now:Int!){Page(page:\$page,perPage:\$perPage){airingSchedules(airingAt_greater:\$now,sort:TIME_ASC){episode airingAt media{id type title{userPreferred romaji english native} coverImage{large} averageScore episodes chapters}}}}"
         val data = execute(query, mapOf("page" to page, "perPage" to perPage, "now" to now))
             .getJSONObject("data").getJSONObject("Page").getJSONArray("airingSchedules")
         List(data.length()) { index ->
             val media = data.getJSONObject(index).getJSONObject("media")
             val titleObject = media.getJSONObject("title")
-            val title = titleObject.optString("english").ifBlank { titleObject.optString("romaji") }
+            val title = preferredTitle(titleObject)
             MediaSummary(
                 id = media.getInt("id"), type = MediaType.ANIME, title = title,
                 coverUrl = media.optJSONObject("coverImage")?.optString("large"),
@@ -47,7 +47,7 @@ class AniListGraphQlService @Inject constructor(
 
     suspend fun search(query: String, type: MediaType?, page: Int = 1): List<MediaSummary> = runCatching {
         mediaPage(
-            "query(\$page:Int!, \$search:String!, \$type:MediaType){Page(page:\$page,perPage:20){media(search:\$search,type:\$type,sort:SEARCH_MATCH){id type title{romaji english} coverImage{large} averageScore episodes chapters}}}",
+            "query(\$page:Int!, \$search:String!, \$type:MediaType){Page(page:\$page,perPage:20){media(search:\$search,type:\$type,sort:SEARCH_MATCH){id type title{userPreferred romaji english native} coverImage{large} averageScore episodes chapters}}}",
             buildMap { put("page", page); put("search", query); put("type", type?.name) }, type,
         )
     }.getOrDefault(emptyList())
@@ -71,10 +71,6 @@ class AniListGraphQlService @Inject constructor(
         val aggregateVolumesRead = manga.optInt("volumesRead")
         val aggregateMangaMeanScore = manga.optDouble("meanScore", 0.0)
 
-        // Use the authenticated user's actual list entries as the authoritative source.
-        // AniList returns the same MediaList entry in both its status section and any
-        // custom lists it belongs to (for example Reading + Yuri). Counting every
-        // collection entry would therefore double-count titles/progress.
         val syncedStats = runCatching {
             loadViewerListStats(viewer.getInt("id"))
         }.getOrNull()
@@ -116,9 +112,6 @@ class AniListGraphQlService @Inject constructor(
         val mangaLists = execute(mangaQuery, mapOf("userId" to userId))
             .getJSONObject("data").getJSONObject("MediaListCollection").getJSONArray("lists")
 
-        // The same MediaList entry can appear once in a normal status section and again
-        // in one or more custom lists. Deduplicate by the MediaList entry ID, not media ID:
-        // the entry ID is the user's actual list record and is stable across those views.
         val animeEntries = uniqueListEntries(animeLists)
         val mangaEntries = uniqueListEntries(mangaLists)
 
@@ -188,12 +181,19 @@ class AniListGraphQlService @Inject constructor(
 
 private fun JSONObject.optionalText(key: String): String? = if (!has(key) || isNull(key)) null else optString(key).takeIf { it.isNotBlank() && it != "null" }
 
+private fun preferredTitle(title: JSONObject): String = listOf("userPreferred", "english", "romaji", "native")
+    .asSequence()
+    .map { title.optString(it) }
+    .firstOrNull { it.isNotBlank() && it != "null" }
+    ?: "Untitled"
+
 private fun JSONArray.toMediaList(requestedType: MediaType?): List<MediaSummary> = List(length()) { index ->
     val item = getJSONObject(index)
-    val title = item.getJSONObject("title").optString("english").ifBlank { item.getJSONObject("title").optString("romaji") }
+    val type = requestedType ?: MediaType.valueOf(item.getString("type"))
+    val title = preferredTitle(item.getJSONObject("title"))
     MediaSummary(
-        id = item.getInt("id"), type = requestedType ?: MediaType.valueOf(item.getString("type")), title = title,
+        id = item.getInt("id"), type = type, title = title,
         coverUrl = item.optJSONObject("coverImage")?.optString("large"), averageScore = item.optInt("averageScore").takeIf { it != 0 },
-        episodesOrChapters = (if (requestedType == MediaType.MANGA) item.optInt("chapters") else item.optInt("episodes")).takeIf { it != 0 },
+        episodesOrChapters = (if (type == MediaType.MANGA) item.optInt("chapters") else item.optInt("episodes")).takeIf { it != 0 },
     )
 }
