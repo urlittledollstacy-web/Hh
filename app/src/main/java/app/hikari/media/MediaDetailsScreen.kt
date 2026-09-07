@@ -101,9 +101,9 @@ fun MediaDetailsScreen(summary: MediaSummary, onBack: () -> Unit, vm: MediaDetai
     }
 
     when (val current = state) {
-        MediaDetailState.Loading -> DetailLoading(::goBack)
-        is MediaDetailState.Error -> DetailError(current.message, ::goBack) { vm.load(currentSummary.id) }
-        is MediaDetailState.Ready -> DetailContent(current.media, ::goBack, openRelation)
+        MediaDetailState.Loading -> DetailLoading { goBack() }
+        is MediaDetailState.Error -> DetailError(current.message, { goBack() }) { vm.load(currentSummary.id) }
+        is MediaDetailState.Ready -> DetailContent(current.media, { goBack() }) { relation -> openRelation(relation) }
     }
 }
 
