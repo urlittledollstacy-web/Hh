@@ -20,7 +20,7 @@ class AniListLibraryService @Inject constructor(
     private val tokenStore: SecureTokenStore,
 ) {
     suspend fun library(type: MediaType): List<LibraryEntry> = withContext(Dispatchers.IO) {
-        val query = "query(\$userId:Int!,\$type:MediaType!){MediaListCollection(userId:\$userId,type:\$type){lists{name entries{id status score progress media{id type title{romaji english} coverImage{large} averageScore episodes chapters}}}}}"
+        val query = "query(\$userId:Int!,\$type:MediaType!){MediaListCollection(userId:\$userId,type:\$type){lists{name entries{id status score progress media{id type title{userPreferred romaji english native} coverImage{large} averageScore episodes chapters}}}}}"
         val viewer = execute("query{Viewer{id}}", emptyMap()).getJSONObject("data").getJSONObject("Viewer")
         val lists = execute(query, mapOf("userId" to viewer.getInt("id"), "type" to type.name))
             .getJSONObject("data").getJSONObject("MediaListCollection").getJSONArray("lists")
@@ -32,17 +32,28 @@ class AniListLibraryService @Inject constructor(
                 val entry = entries.getJSONObject(j)
                 val id = entry.optInt("id", 0)
                 if (id == 0 || unique.containsKey(id)) continue
-                val media = entry.getJSONObject("media")
-                val title = media.getJSONObject("title").optString("english").ifBlank {
-                    media.getJSONObject("title").optString("romaji")
-                }
+
+                val media = entry.optJSONObject("media") ?: continue
+                val mediaId = media.optInt("id", 0)
+                if (mediaId == 0) continue
+
+                val titleObject = media.optJSONObject("title")
+                val title = titleObject?.let {
+                    listOf("userPreferred", "english", "romaji", "native")
+                        .asSequence()
+                        .mapNotNull { key ->
+                            if (it.has(key) && !it.isNull(key)) it.optString(key).trim() else null
+                        }
+                        .firstOrNull { value -> value.isNotBlank() && value != "null" }
+                } ?: "Untitled #$mediaId"
+
                 unique[id] = LibraryEntry(
                     id = id,
                     media = MediaSummary(
-                        id = media.getInt("id"),
+                        id = mediaId,
                         type = type,
                         title = title,
-                        coverUrl = media.optJSONObject("coverImage")?.optString("large"),
+                        coverUrl = media.optJSONObject("coverImage")?.optString("large")?.takeIf { it.isNotBlank() },
                         averageScore = media.optInt("averageScore").takeIf { it != 0 },
                         episodesOrChapters = (
                             if (type == MediaType.MANGA) media.optInt("chapters")
