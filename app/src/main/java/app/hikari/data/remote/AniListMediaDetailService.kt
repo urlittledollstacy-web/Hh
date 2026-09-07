@@ -2,6 +2,7 @@ package app.hikari.data.remote
 
 import app.hikari.core.auth.SecureTokenStore
 import app.hikari.core.model.MediaDetail
+import app.hikari.core.model.MediaRelation
 import app.hikari.core.model.MediaSummary
 import app.hikari.core.model.MediaType
 import kotlinx.coroutines.Dispatchers
@@ -59,14 +60,18 @@ class AniListMediaDetailService @Inject constructor(
         } ?: emptyList()
         val relations = media.optJSONObject("relations")?.optJSONArray("edges")?.let { array ->
             List(array.length()) { i ->
-                array.getJSONObject(i).optJSONObject("node")?.let { node ->
+                val edge = array.getJSONObject(i)
+                edge.optJSONObject("node")?.let { node ->
                     val nodeType = MediaType.valueOf(node.getString("type"))
-                    MediaSummary(
-                        id = node.getInt("id"), type = nodeType,
-                        title = preferredTitle(node.getJSONObject("title")),
-                        coverUrl = node.optJSONObject("coverImage")?.optString("large"),
-                        averageScore = node.optInt("averageScore").takeIf { it != 0 },
-                        episodesOrChapters = (if (nodeType == MediaType.ANIME) node.optInt("episodes") else node.optInt("chapters")).takeIf { it != 0 },
+                    MediaRelation(
+                        relationType = edge.optString("relationType").replace('_', ' '),
+                        media = MediaSummary(
+                            id = node.getInt("id"), type = nodeType,
+                            title = preferredTitle(node.getJSONObject("title")),
+                            coverUrl = node.optJSONObject("coverImage")?.optString("large"),
+                            averageScore = node.optInt("averageScore").takeIf { it != 0 },
+                            episodesOrChapters = (if (nodeType == MediaType.ANIME) node.optInt("episodes") else node.optInt("chapters")).takeIf { it != 0 },
+                        ),
                     )
                 }
             }.filterNotNull()
