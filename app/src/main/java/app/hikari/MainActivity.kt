@@ -78,6 +78,7 @@ import app.hikari.core.model.MediaSummary
 import app.hikari.core.model.MediaType
 import app.hikari.data.remote.AniListGraphQlService
 import app.hikari.library.LibraryScreen
+import app.hikari.media.MediaDetailsScreen
 import app.hikari.profile.ProfileDetails
 import coil3.compose.AsyncImage
 import dagger.hilt.android.AndroidEntryPoint
@@ -152,19 +153,9 @@ class HomeViewModel @Inject constructor(private val api: AniListGraphQlService) 
     }
 }
 
-enum class SearchMediaFilter(val label: String, val type: MediaType?) {
-    ALL("All", null), ANIME("Anime", MediaType.ANIME), MANGA("Manga", MediaType.MANGA)
-}
+enum class SearchMediaFilter(val label: String, val type: MediaType?) { ALL("All", null), ANIME("Anime", MediaType.ANIME), MANGA("Manga", MediaType.MANGA) }
 
-data class SearchUiState(
-    val query: String = "",
-    val results: List<MediaSummary> = emptyList(),
-    val searching: Boolean = false,
-    val loadingMore: Boolean = false,
-    val page: Int = 1,
-    val hasMore: Boolean = false,
-    val filter: SearchMediaFilter = SearchMediaFilter.ALL,
-)
+data class SearchUiState(val query: String = "", val results: List<MediaSummary> = emptyList(), val searching: Boolean = false, val loadingMore: Boolean = false, val page: Int = 1, val hasMore: Boolean = false, val filter: SearchMediaFilter = SearchMediaFilter.ALL)
 
 @HiltViewModel
 class SearchViewModel @Inject constructor(private val api: AniListGraphQlService) : ViewModel() {
@@ -177,10 +168,7 @@ class SearchViewModel @Inject constructor(private val api: AniListGraphQlService
         _state.value = _state.value.copy(query = normalized, results = emptyList(), page = 1, hasMore = false)
         searchJob?.cancel()
         if (normalized.trim().isBlank()) return
-        searchJob = viewModelScope.launch {
-            delay(350)
-            searchFirstPage()
-        }
+        searchJob = viewModelScope.launch { delay(350); searchFirstPage() }
     }
 
     fun setFilter(filter: SearchMediaFilter) {
@@ -188,17 +176,8 @@ class SearchViewModel @Inject constructor(private val api: AniListGraphQlService
         _state.value = _state.value.copy(filter = filter, results = emptyList(), page = 1, hasMore = false)
         if (_state.value.query.trim().isNotBlank()) {
             searchJob?.cancel()
-            searchJob = viewModelScope.launch {
-                delay(180)
-                searchFirstPage()
-            }
+            searchJob = viewModelScope.launch { delay(180); searchFirstPage() }
         }
-    }
-
-    fun searchNow() {
-        if (_state.value.query.trim().isBlank()) return
-        searchJob?.cancel()
-        searchJob = viewModelScope.launch { searchFirstPage() }
     }
 
     fun loadMore() {
@@ -223,10 +202,7 @@ class SearchViewModel @Inject constructor(private val api: AniListGraphQlService
         _state.value = _state.value.copy(results = results, searching = false, page = 1, hasMore = results.size >= 20)
     }
 
-    override fun onCleared() {
-        searchJob?.cancel()
-        super.onCleared()
-    }
+    override fun onCleared() { searchJob?.cancel(); super.onCleared() }
 }
 
 @Composable
@@ -234,16 +210,21 @@ private fun HikariApp(signedIn: Boolean, onSignIn: () -> Unit, onSignOut: () -> 
     var destination by remember { mutableStateOf(Destination.Home) }
     var theme by remember { mutableStateOf(AppTheme.System) }
     var navStyle by remember { mutableStateOf(NavigationStyle.Blur) }
+    var selectedMedia by remember { mutableStateOf<MediaSummary?>(null) }
     val colors = hikariColors(theme, isSystemInDarkTheme())
     MaterialTheme(colorScheme = colors) {
         Surface(Modifier.fillMaxSize(), color = colors.background) {
-            BoxWithConstraints(Modifier.fillMaxSize()) {
-                if (maxWidth >= 700.dp) Row(Modifier.fillMaxSize()) {
-                    NavigationRail(destination, { destination = it }, navStyle)
-                    AppContent(destination, theme, navStyle, signedIn, onSignIn, onSignOut, { theme = it }, { navStyle = it }, PaddingValues(0.dp), { destination = it })
-                } else Box(Modifier.fillMaxSize()) {
-                    AppContent(destination, theme, navStyle, signedIn, onSignIn, onSignOut, { theme = it }, { navStyle = it }, PaddingValues(bottom = 104.dp), { destination = it })
-                    BottomNavigation(destination, { destination = it }, navStyle, Modifier.align(Alignment.BottomCenter).padding(16.dp))
+            if (selectedMedia != null) {
+                MediaDetailsScreen(selectedMedia!!, onBack = { selectedMedia = null })
+            } else {
+                BoxWithConstraints(Modifier.fillMaxSize()) {
+                    if (maxWidth >= 700.dp) Row(Modifier.fillMaxSize()) {
+                        NavigationRail(destination, { destination = it }, navStyle)
+                        AppContent(destination, theme, navStyle, signedIn, onSignIn, onSignOut, { theme = it }, { navStyle = it }, PaddingValues(0.dp), { destination = it }, { selectedMedia = it })
+                    } else Box(Modifier.fillMaxSize()) {
+                        AppContent(destination, theme, navStyle, signedIn, onSignIn, onSignOut, { theme = it }, { navStyle = it }, PaddingValues(bottom = 104.dp), { destination = it }, { selectedMedia = it })
+                        BottomNavigation(destination, { destination = it }, navStyle, Modifier.align(Alignment.BottomCenter).padding(16.dp))
+                    }
                 }
             }
         }
@@ -251,10 +232,10 @@ private fun HikariApp(signedIn: Boolean, onSignIn: () -> Unit, onSignOut: () -> 
 }
 
 @Composable
-private fun AppContent(destination: Destination, theme: AppTheme, navStyle: NavigationStyle, signedIn: Boolean, onSignIn: () -> Unit, onSignOut: () -> Unit, onTheme: (AppTheme) -> Unit, onNavStyle: (NavigationStyle) -> Unit, padding: PaddingValues, onDestination: (Destination) -> Unit) {
+private fun AppContent(destination: Destination, theme: AppTheme, navStyle: NavigationStyle, signedIn: Boolean, onSignIn: () -> Unit, onSignOut: () -> Unit, onTheme: (AppTheme) -> Unit, onNavStyle: (NavigationStyle) -> Unit, padding: PaddingValues, onDestination: (Destination) -> Unit, onMediaClick: (MediaSummary) -> Unit) {
     when (destination) {
-        Destination.Home -> HomeScreen(padding, onSearch = { onDestination(Destination.Discover) })
-        Destination.Discover -> DiscoverScreen(padding)
+        Destination.Home -> HomeScreen(padding, onSearch = { onDestination(Destination.Discover) }, onMediaClick = onMediaClick)
+        Destination.Discover -> DiscoverScreen(padding, onMediaClick)
         Destination.Library -> LibraryScreen(signedIn, padding)
         Destination.Calendar -> PlaceholderScreen("Airing calendar", "THIS WEEK", "See upcoming episodes at a glance.", "View today's airing", padding)
         Destination.Profile -> ProfileScreen(theme, navStyle, signedIn, onSignIn, onSignOut, onTheme, onNavStyle, padding)
@@ -262,117 +243,47 @@ private fun AppContent(destination: Destination, theme: AppTheme, navStyle: Navi
 }
 
 @Composable
-private fun HomeScreen(padding: PaddingValues, onSearch: () -> Unit, vm: HomeViewModel = hiltViewModel()) {
+private fun HomeScreen(padding: PaddingValues, onSearch: () -> Unit, onMediaClick: (MediaSummary) -> Unit, vm: HomeViewModel = hiltViewModel()) {
     val state by vm.state.collectAsState()
     LazyColumn(contentPadding = PaddingValues(20.dp, 26.dp, 20.dp, padding.calculateBottomPadding() + 20.dp), verticalArrangement = Arrangement.spacedBy(22.dp)) {
         item { Row(verticalAlignment = Alignment.CenterVertically) { Column(Modifier.weight(1f)) { Text("Good evening", color = MaterialTheme.colorScheme.onSurfaceVariant); Text("Find your next favorite.", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold) }; Box(Modifier.size(44.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primary), contentAlignment = Alignment.Center) { Text("H", color = MaterialTheme.colorScheme.onPrimary, fontWeight = FontWeight.Bold) } } }
         item { Row(Modifier.fillMaxWidth().height(58.dp).clip(RoundedCornerShape(18.dp)).background(MaterialTheme.colorScheme.surfaceVariant).clickable(onClick = onSearch).padding(horizontal = 15.dp), verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Outlined.Search, "Search", tint = MaterialTheme.colorScheme.onSurfaceVariant); Spacer(Modifier.width(10.dp)); Text("Search anime, manga, people...", color = MaterialTheme.colorScheme.onSurfaceVariant) } }
         if (state.error != null) item { Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)) { Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) { Text(state.error.orEmpty(), Modifier.weight(1f), color = MaterialTheme.colorScheme.onErrorContainer); TextButton(onClick = vm::refresh) { Text("Retry") } } } }
         item { SectionTitle("Airing soon", "See all") }
-        item { if (state.loading) LoadingRow() else if (state.airing.isEmpty()) EmptyMessage("No upcoming episodes found.") else MediaRow(state.airing, true) }
+        item { if (state.loading) LoadingRow() else if (state.airing.isEmpty()) EmptyMessage("No upcoming episodes found.") else MediaRow(state.airing, true, onMediaClick) }
         item { Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) { Text("Trending now", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f)); IconButton(onClick = vm::refresh, enabled = !state.refreshing) { if (state.refreshing) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp) else Icon(Icons.Outlined.Refresh, "Refresh") } } }
-        item { if (state.loading) LoadingRow() else if (state.trending.isEmpty()) EmptyMessage("No trending anime found.") else MediaRow(state.trending) }
+        item { if (state.loading) LoadingRow() else if (state.trending.isEmpty()) EmptyMessage("No trending anime found.") else MediaRow(state.trending, false, onMediaClick) }
     }
 }
 
 @Composable
-private fun DiscoverScreen(padding: PaddingValues, vm: SearchViewModel = hiltViewModel()) {
+private fun DiscoverScreen(padding: PaddingValues, onMediaClick: (MediaSummary) -> Unit, vm: SearchViewModel = hiltViewModel()) {
     val state by vm.state.collectAsState()
     LazyColumn(contentPadding = PaddingValues(20.dp, 28.dp, 20.dp, padding.calculateBottomPadding() + 24.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        item {
-            Text("Discover", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
-            Text("Search AniList instantly", color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        item {
-            OutlinedTextField(
-                value = state.query,
-                onValueChange = vm::setQuery,
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-                placeholder = { Text("Search anime, manga...") },
-                leadingIcon = { Icon(Icons.Outlined.Search, "Search") },
-                trailingIcon = {
-                    if (state.query.isNotBlank()) {
-                        TextButton(onClick = { vm.setQuery("") }) { Text("Clear") }
-                    }
-                },
-            )
-        }
-        item {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                SearchMediaFilter.entries.forEach { filter ->
-                    val active = filter == state.filter
-                    Box(
-                        Modifier
-                            .clip(CircleShape)
-                            .background(if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant)
-                            .clickable { vm.setFilter(filter) }
-                            .padding(horizontal = 16.dp, vertical = 10.dp)
-                    ) {
-                        Text(
-                            filter.label,
-                            color = if (active) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
-                            fontSize = 12.sp,
-                            fontWeight = if (active) FontWeight.Bold else FontWeight.Normal,
-                        )
-                    }
-                }
-            }
-        }
+        item { Text("Discover", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold); Text("Search AniList instantly", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+        item { OutlinedTextField(value = state.query, onValueChange = vm::setQuery, modifier = Modifier.fillMaxWidth(), singleLine = true, placeholder = { Text("Search anime, manga...") }, leadingIcon = { Icon(Icons.Outlined.Search, "Search") }, trailingIcon = { if (state.query.isNotBlank()) TextButton(onClick = { vm.setQuery("") }) { Text("Clear") } }) }
+        item { Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) { SearchMediaFilter.entries.forEach { filter -> val active = filter == state.filter; Box(Modifier.clip(CircleShape).background(if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant).clickable { vm.setFilter(filter) }.padding(horizontal = 16.dp, vertical = 10.dp)) { Text(filter.label, color = if (active) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface, fontSize = 12.sp, fontWeight = if (active) FontWeight.Bold else FontWeight.Normal) } } } }
         if (state.searching) item { Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) { CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp) } }
-        if (state.query.isBlank()) {
-            item {
-                EmptyMessage("Start typing — Hikari will show suggestions automatically.")
-            }
-        } else if (!state.searching && state.results.isEmpty()) {
-            item { EmptyMessage("No results found for \"${state.query.trim()}\".") }
-        } else if (state.results.isNotEmpty()) {
-            item {
-                Text(
-                    if (state.query.trim().length == 1) "Suggestions" else "Results",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                )
-            }
-            item { SearchResults(state.results) }
-            if (state.hasMore) {
-                item {
-                    Button(onClick = vm::loadMore, enabled = !state.loadingMore, modifier = Modifier.fillMaxWidth()) {
-                        if (state.loadingMore) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp) else Text("Load more")
-                    }
-                }
-            }
+        if (state.query.isBlank()) item { EmptyMessage("Start typing — Hikari will show suggestions automatically.") }
+        else if (!state.searching && state.results.isEmpty()) item { EmptyMessage("No results found for \"${state.query.trim()}\".") }
+        else if (state.results.isNotEmpty()) {
+            item { Text(if (state.query.trim().length == 1) "Suggestions" else "Results", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
+            item { SearchResults(state.results, onMediaClick) }
+            if (state.hasMore) item { Button(onClick = vm::loadMore, enabled = !state.loadingMore, modifier = Modifier.fillMaxWidth()) { if (state.loadingMore) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp) else Text("Load more") } }
         }
     }
 }
 
 @Composable
-private fun SearchResults(media: List<MediaSummary>) {
+private fun SearchResults(media: List<MediaSummary>, onMediaClick: (MediaSummary) -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         media.forEach { item ->
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(MaterialTheme.colorScheme.surfaceVariant)
-                    .padding(10.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Box(Modifier.size(58.dp).clip(RoundedCornerShape(10.dp)).background(MaterialTheme.colorScheme.surface)) {
-                    item.coverUrl?.let { AsyncImage(model = it, contentDescription = item.title, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
-                }
+            Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(MaterialTheme.colorScheme.surfaceVariant).clickable { onMediaClick(item) }.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(58.dp).clip(RoundedCornerShape(10.dp)).background(MaterialTheme.colorScheme.surface)) { item.coverUrl?.let { AsyncImage(model = it, contentDescription = item.title, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop) } }
                 Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f)) {
                     Text(item.title, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                    Text(
-                        buildString {
-                            append(if (item.type == MediaType.ANIME) "Anime" else "Manga")
-                            item.averageScore?.let { append("  •  ★ $it%") }
-                            item.episodesOrChapters?.let { append("  •  ${if (item.type == MediaType.ANIME) "$it eps" else "$it ch"}") }
-                        },
-                        fontSize = 12.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                    Text(buildString { append(if (item.type == MediaType.ANIME) "Anime" else "Manga"); item.averageScore?.let { append("  •  ★ $it%") }; item.episodesOrChapters?.let { append("  •  ${if (item.type == MediaType.ANIME) "$it eps" else "$it ch"}") } }, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         }
@@ -384,13 +295,11 @@ private fun SearchResults(media: List<MediaSummary>) {
 @Composable private fun SectionTitle(title: String, action: String? = null) { Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) { Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f)); action?.let { Text(it, color = MaterialTheme.colorScheme.primary, fontSize = 13.sp) } } }
 
 @Composable
-private fun MediaRow(media: List<MediaSummary>, airing: Boolean = false) { LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) { items(media, key = { it.id }) { item -> Column(Modifier.width(126.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) { Box(Modifier.fillMaxWidth().aspectRatio(.7f).clip(RoundedCornerShape(18.dp)).background(MaterialTheme.colorScheme.surfaceVariant)) { item.coverUrl?.let { AsyncImage(model = it, contentDescription = item.title, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop) } }; Text(item.title, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold); Text(if (airing && item.episodesOrChapters != null) "Episode ${item.episodesOrChapters}" else item.averageScore?.let { "★ $it%" } ?: "AniList", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) } } } }
+private fun MediaRow(media: List<MediaSummary>, airing: Boolean = false, onMediaClick: (MediaSummary) -> Unit) { LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) { items(media, key = { it.id }) { item -> Column(Modifier.width(126.dp).clickable { onMediaClick(item) }, verticalArrangement = Arrangement.spacedBy(7.dp)) { Box(Modifier.fillMaxWidth().aspectRatio(.7f).clip(RoundedCornerShape(18.dp)).background(MaterialTheme.colorScheme.surfaceVariant)) { item.coverUrl?.let { AsyncImage(model = it, contentDescription = item.title, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop) } }; Text(item.title, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold); Text(if (airing && item.episodesOrChapters != null) "Episode ${item.episodesOrChapters}" else item.averageScore?.let { "★ $it%" } ?: "AniList", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) } } } }
 
-@Composable
-private fun PlaceholderScreen(title: String, eyebrow: String, description: String, action: String, padding: PaddingValues) { Column(Modifier.fillMaxSize().padding(start = 24.dp, top = 36.dp, end = 24.dp, bottom = padding.calculateBottomPadding()), verticalArrangement = Arrangement.spacedBy(16.dp)) { Text(eyebrow, color = MaterialTheme.colorScheme.primary, fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.4.sp); Text(title, style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold); Text(description, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant); Button(onClick = {}, colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)) { Text(action) } } }
+@Composable private fun PlaceholderScreen(title: String, eyebrow: String, description: String, action: String, padding: PaddingValues) { Column(Modifier.fillMaxSize().padding(start = 24.dp, top = 36.dp, end = 24.dp, bottom = padding.calculateBottomPadding()), verticalArrangement = Arrangement.spacedBy(16.dp)) { Text(eyebrow, color = MaterialTheme.colorScheme.primary, fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.4.sp); Text(title, style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold); Text(description, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant); Button(onClick = {}, colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)) { Text(action) } } }
 
-@Composable
-private fun ProfileScreen(theme: AppTheme, navStyle: NavigationStyle, signedIn: Boolean, onSignIn: () -> Unit, onSignOut: () -> Unit, onTheme: (AppTheme) -> Unit, onNavStyle: (NavigationStyle) -> Unit, padding: PaddingValues) {
+@Composable private fun ProfileScreen(theme: AppTheme, navStyle: NavigationStyle, signedIn: Boolean, onSignIn: () -> Unit, onSignOut: () -> Unit, onTheme: (AppTheme) -> Unit, onNavStyle: (NavigationStyle) -> Unit, padding: PaddingValues) {
     LazyColumn(contentPadding = PaddingValues(20.dp, 28.dp, 20.dp, padding.calculateBottomPadding() + 24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         item { Text("Profile", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold) }
         item { Text(if (signedIn) "Connected to AniList" else "Browsing as guest", color = MaterialTheme.colorScheme.onSurfaceVariant) }
@@ -401,10 +310,7 @@ private fun ProfileScreen(theme: AppTheme, navStyle: NavigationStyle, signedIn: 
 }
 @Composable private fun SettingGroup(title: String, content: @Composable () -> Unit) { Column(verticalArrangement = Arrangement.spacedBy(10.dp)) { Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold); Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) { Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) { content() } } } }
 @Composable private fun ChoiceRow(options: List<String>, selected: String, onSelect: (String) -> Unit) { Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) { options.forEach { option -> val active = option == selected; Box(Modifier.clip(CircleShape).background(if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surface).clickable { onSelect(option) }.padding(horizontal = 14.dp, vertical = 10.dp)) { Text(option, color = if (active) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface, fontSize = 12.sp) } } } }
-
-@Composable
-private fun BottomNavigation(selected: Destination, onSelect: (Destination) -> Unit, style: NavigationStyle, modifier: Modifier) { val surface = when (style) { NavigationStyle.Off -> MaterialTheme.colorScheme.surface; NavigationStyle.Blur -> MaterialTheme.colorScheme.surface.copy(alpha = .95f); NavigationStyle.Liquid -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .9f) }; Row(modifier.fillMaxWidth().clip(RoundedCornerShape(28.dp)).background(surface).border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = .15f), RoundedCornerShape(28.dp)).padding(5.dp), horizontalArrangement = Arrangement.SpaceEvenly) { Destination.entries.forEach { NavigationItem(it, it == selected) { onSelect(it) } } } }
+@Composable private fun BottomNavigation(selected: Destination, onSelect: (Destination) -> Unit, style: NavigationStyle, modifier: Modifier) { val surface = when (style) { NavigationStyle.Off -> MaterialTheme.colorScheme.surface; NavigationStyle.Blur -> MaterialTheme.colorScheme.surface.copy(alpha = .95f); NavigationStyle.Liquid -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .9f) }; Row(modifier.fillMaxWidth().clip(RoundedCornerShape(28.dp)).background(surface).border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = .15f), RoundedCornerShape(28.dp)).padding(5.dp), horizontalArrangement = Arrangement.SpaceEvenly) { Destination.entries.forEach { NavigationItem(it, it == selected) { onSelect(it) } } } }
 @Composable private fun NavigationRail(selected: Destination, onSelect: (Destination) -> Unit, style: NavigationStyle) { Column(Modifier.fillMaxHeight().width(96.dp).padding(12.dp).clip(RoundedCornerShape(28.dp)).background(if (style == NavigationStyle.Off) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .8f)).padding(vertical = 16.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) { Destination.entries.forEach { NavigationItem(it, it == selected) { onSelect(it) } } } }
 @Composable private fun NavigationItem(destination: Destination, selected: Boolean, onClick: () -> Unit) { Column(Modifier.width(64.dp).height(64.dp).clip(RoundedCornerShape(18.dp)).clickable(onClick = onClick).padding(5.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) { Icon(destination.icon, destination.label, tint = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(26.dp)); Text(destination.label, fontSize = 10.sp, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal, color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant) } }
-
 private fun hikariColors(theme: AppTheme, systemDark: Boolean) = if (theme == AppTheme.System && !systemDark) lightColorScheme(primary = Color(0xFF7054B8), onPrimary = Color.White, background = Color(0xFFFAF8FF), surface = Color.White, surfaceVariant = Color(0xFFF0EDF5), onSurface = Color(0xFF1C1B20), onSurfaceVariant = Color(0xFF5F5B66)) else darkColorScheme(primary = if (theme == AppTheme.Amoled) Color(0xFFD2C1FF) else Color(0xFFC5B3FF), onPrimary = Color(0xFF2A1750), background = Color.Black, surface = if (theme == AppTheme.Amoled) Color.Black else Color(0xFF0C0C0F), surfaceVariant = if (theme == AppTheme.Aurora) Color(0xFF17151E) else Color(0xFF111114), onSurface = Color(0xFFF1EDF5), onSurfaceVariant = Color(0xFFBDB8C5), outline = Color(0xFF5A5660), errorContainer = Color(0xFF4A171A), onErrorContainer = Color(0xFFFFDAD6))
