@@ -21,7 +21,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Favorite
-import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Remove
 import androidx.compose.material3.AlertDialog
@@ -64,7 +63,6 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 import kotlin.math.roundToInt
@@ -89,11 +87,7 @@ class LibraryViewModel @Inject constructor(
         _state.value = _state.value.copy(loading = true, error = null)
         runCatching { api.library(type) }
             .onSuccess { snapshot ->
-                _state.value = _state.value.copy(
-                    entries = snapshot.entries,
-                    scoreFormat = snapshot.scoreFormat,
-                    loading = false,
-                )
+                _state.value = _state.value.copy(entries = snapshot.entries, scoreFormat = snapshot.scoreFormat, loading = false)
             }
             .onFailure { error ->
                 _state.value = _state.value.copy(loading = false, error = error.message ?: "Couldn't load your library.")
@@ -148,9 +142,10 @@ fun LibraryScreen(
         return
     }
 
-    val filtered = when {
-        status == "FAVORITES" -> state.favorites.filter { it.type == type }
-        status == "ALL" -> state.entries
+    val filteredFavorites = state.favorites.filter { it.type == type }
+    val filteredEntries = when (status) {
+        "ALL" -> state.entries
+        "FAVORITES" -> emptyList()
         else -> state.entries.filter { it.status == status }
     }
     val statuses = listOf("ALL", "CURRENT", "PLANNING", "COMPLETED", "REPEATING", "PAUSED", "DROPPED", "FAVORITES")
@@ -194,7 +189,7 @@ fun LibraryScreen(
                 }
             }
         }
-        if (!state.loading && (state.error == null || status == "FAVORITES") && filtered.isEmpty()) {
+        if (!state.loading && state.error == null && ((status == "FAVORITES" && filteredFavorites.isEmpty()) || (status != "FAVORITES" && filteredEntries.isEmpty()))) {
             item {
                 Text(
                     if (status == "FAVORITES") "No Hikari favorites yet. Tap the heart on a title to save it here."
@@ -205,9 +200,11 @@ fun LibraryScreen(
             }
         }
         if (status == "FAVORITES") {
-            items(filtered, key = { "favorite-${it.type}-${it.id}" }) { media -> FavoriteCard(media, onClick = { onMediaClick(media) }, onToggle = { vm.toggleFavorite(media) }) }
+            items(filteredFavorites, key = { "favorite-${it.type}-${it.id}" }) { media ->
+                FavoriteCard(media, onClick = { onMediaClick(media) }, onToggle = { vm.toggleFavorite(media) })
+            }
         } else {
-            items(filtered, key = { it.id }) { entry -> LibraryCard(entry, type, state.scoreFormat) { selected = entry } }
+            items(filteredEntries, key = { it.id }) { entry -> LibraryCard(entry, type, state.scoreFormat) { selected = entry } }
         }
     }
 
@@ -225,10 +222,7 @@ fun LibraryScreen(
 
 @Composable
 private fun FavoriteCard(media: MediaSummary, onClick: () -> Unit, onToggle: () -> Unit) {
-    Card(
-        modifier = Modifier.clickable(onClick = onClick),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-    ) {
+    Card(modifier = Modifier.clickable(onClick = onClick), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
         Row(Modifier.fillMaxWidth().padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.width(72.dp).aspectRatio(.7f).clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.surface)) {
                 media.coverUrl?.let { AsyncImage(model = it, contentDescription = media.title, Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
