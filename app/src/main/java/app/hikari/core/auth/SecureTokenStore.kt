@@ -19,7 +19,13 @@ class SecureTokenStore @Inject constructor(@ApplicationContext context: Context)
 
     fun accessToken(): String? = preferences.getString(TOKEN, null)
     fun saveAccessToken(token: String) = preferences.edit().putString(TOKEN, token).apply()
+    fun oauthState(): String? = preferences.getString(OAUTH_STATE, null)
+    fun saveOAuthState(state: String) = preferences.edit().putString(OAUTH_STATE, state).apply()
+    fun clearOAuthState() = preferences.edit().remove(OAUTH_STATE).apply()
     fun clear() = preferences.edit().clear().apply()
 
-    private companion object { const val TOKEN = "anilist_access_token" }
+    private companion object {
+        const val TOKEN = "anilist_access_token"
+        const val OAUTH_STATE = "anilist_oauth_state"
+    }
 }
