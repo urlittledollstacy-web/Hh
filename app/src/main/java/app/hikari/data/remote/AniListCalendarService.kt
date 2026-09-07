@@ -20,7 +20,9 @@ class AniListCalendarService @Inject constructor(
 ) {
     suspend fun airingSchedule(from: Long, to: Long): List<AiringScheduleEntry> = withContext(Dispatchers.IO) {
         val results = mutableListOf<AiringScheduleEntry>()
-        for (page in 1..10) {
+        // Keep the calendar responsive: four pages cover a broad set of currently
+        // releasing anime without the previous ten sequential network requests.
+        for (page in 1..4) {
             val query = "query(\$page:Int!){Page(page:\$page,perPage:50){pageInfo{hasNextPage}media(type:ANIME,status:RELEASING){id title{userPreferred english romaji native} coverImage{large} averageScore episodes nextAiringEpisode{id airingAt timeUntilAiring episode}}}}"
             val pageObject = execute(query, mapOf("page" to page))
                 .getJSONObject("data").getJSONObject("Page")
