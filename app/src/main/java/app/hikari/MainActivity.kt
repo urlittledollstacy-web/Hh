@@ -136,7 +136,7 @@ private fun HikariApp() {
 @Composable
 private fun AppContent(destination: Destination, theme: AppTheme, navStyle: NavigationStyle, onTheme: (AppTheme) -> Unit, onNavStyle: (NavigationStyle) -> Unit, padding: PaddingValues, onDestination: (Destination) -> Unit) {
     when (destination) {
-        Destination.Home -> HomeScreen(padding) { onDestination(Destination.Discover) }
+        Destination.Home -> HomeScreen(padding, onSearch = { onDestination(Destination.Discover) })
         Destination.Discover -> DiscoverScreen(padding)
         Destination.Library -> PlaceholderScreen("Your library", "ANILIST SYNC", "Sign in to keep your watching and reading progress organized across AniList.", "Sign in with AniList", padding)
         Destination.Calendar -> PlaceholderScreen("Airing calendar", "THIS WEEK", "See upcoming episodes at a glance.", "View today's airing", padding)
