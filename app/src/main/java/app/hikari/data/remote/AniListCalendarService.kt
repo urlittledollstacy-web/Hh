@@ -20,23 +20,23 @@ class AniListCalendarService @Inject constructor(
 ) {
     suspend fun airingSchedule(from: Long, to: Long): List<AiringScheduleEntry> = withContext(Dispatchers.IO) {
         val results = mutableListOf<AiringScheduleEntry>()
-        for (page in 1..6) {
-            val query = "query(\$page:Int!){Page(page:\$page,perPage:50){pageInfo{hasNextPage}airingSchedules(notYetAired:true,sort:AIRING_AT){id airingAt timeUntilAiring episode media{id type title{userPreferred english romaji native} coverImage{large} averageScore episodes chapters}}}}"
+        for (page in 1..10) {
+            val query = "query(\$page:Int!){Page(page:\$page,perPage:50){pageInfo{hasNextPage}media(type:ANIME,status:RELEASING){id title{userPreferred english romaji native} coverImage{large} averageScore episodes nextAiringEpisode{id airingAt timeUntilAiring episode}}}}"
             val pageObject = execute(query, mapOf("page" to page))
                 .getJSONObject("data").getJSONObject("Page")
-            val data = pageObject.getJSONArray("airingSchedules")
+            val data = pageObject.getJSONArray("media")
             for (index in 0 until data.length()) {
-                val item = data.getJSONObject(index)
-                val airingAt = item.getLong("airingAt")
+                val media = data.getJSONObject(index)
+                val next = media.optJSONObject("nextAiringEpisode") ?: continue
+                val airingAt = next.getLong("airingAt")
                 if (airingAt < from || airingAt >= to) continue
-                val media = item.getJSONObject("media")
                 results += AiringScheduleEntry(
-                    id = item.getLong("id"),
+                    id = next.getLong("id"),
                     airingAt = airingAt,
-                    timeUntilAiring = item.optLong("timeUntilAiring"),
-                    episode = item.optInt("episode"),
+                    timeUntilAiring = next.optLong("timeUntilAiring"),
+                    episode = next.optInt("episode"),
                     mediaId = media.getInt("id"),
-                    mediaType = runCatching { MediaType.valueOf(media.optString("type")) }.getOrDefault(MediaType.ANIME),
+                    mediaType = MediaType.ANIME,
                     title = preferredTitle(media.optJSONObject("title")),
                     coverUrl = media.optJSONObject("coverImage")?.optString("large")?.takeIf { it.isNotBlank() },
                     averageScore = media.optInt("averageScore").takeIf { it > 0 },
