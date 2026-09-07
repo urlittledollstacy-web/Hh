@@ -70,6 +70,7 @@ import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import app.hikari.calendar.CalendarScreen
 import app.hikari.core.auth.AniListAuthManager
 import app.hikari.core.auth.AuthCallbackResult
 import app.hikari.core.auth.AuthStartResult
@@ -237,7 +238,7 @@ private fun AppContent(destination: Destination, theme: AppTheme, navStyle: Navi
         Destination.Home -> HomeScreen(padding, onSearch = { onDestination(Destination.Discover) }, onMediaClick = onMediaClick)
         Destination.Discover -> DiscoverScreen(padding, onMediaClick)
         Destination.Library -> LibraryScreen(signedIn, padding)
-        Destination.Calendar -> PlaceholderScreen("Airing calendar", "THIS WEEK", "See upcoming episodes at a glance.", "View today's airing", padding)
+        Destination.Calendar -> CalendarScreen(padding, onMediaClick, signedIn)
         Destination.Profile -> ProfileScreen(theme, navStyle, signedIn, onSignIn, onSignOut, onTheme, onNavStyle, padding)
     }
 }
