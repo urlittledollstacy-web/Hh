@@ -111,3 +111,16 @@ text = main.read_text()
 for old, new in replacements.items():
     text = text.replace(old, new)
 main.write_text(text)
+
+# Commit the patched source and remove all temporary patch tooling.
+import subprocess
+
+def run(*args):
+    subprocess.run(args, check=True)
+
+run('git', 'config', 'user.name', 'github-actions[bot]')
+run('git', 'config', 'user.email', '41898282+github-actions[bot]@users.noreply.github.com')
+run('git', 'add', 'app/src/main/java/app/hikari/MainActivity.kt', 'app/src/main/java/app/hikari/data/remote/AniListGraphQlService.kt')
+run('git', 'rm', '-f', '.github/workflows/fix-search-build.yml', '.github/workflows/apply-home-recommendations.yml', '.github/apply_home_recommendations.py')
+run('git', 'commit', '-m', 'Add personalized Home recommendations [skip ci]')
+run('git', 'push', 'origin', 'HEAD:codex/create-personal-anilist-android-client')
