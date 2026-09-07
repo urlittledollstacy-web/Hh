@@ -35,7 +35,6 @@ import androidx.compose.material.icons.outlined.CalendarMonth
 import androidx.compose.material.icons.outlined.CompassCalibration
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.PersonOutline
-import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -313,18 +312,25 @@ private fun HikariApp(signedIn: Boolean, onSignIn: () -> Unit, onSignOut: () -> 
     var theme by remember { mutableStateOf(AppTheme.System) }
     var navStyle by remember { mutableStateOf(NavigationStyle.Blur) }
     var selectedMedia by remember { mutableStateOf<MediaSummary?>(null) }
+    var showTrending by remember { mutableStateOf(false) }
     val colors = hikariColors(theme, isSystemInDarkTheme())
     MaterialTheme(colorScheme = colors) {
         Surface(Modifier.fillMaxSize(), color = colors.background) {
             if (selectedMedia != null) {
                 MediaDetailsScreen(selectedMedia!!, onBack = { selectedMedia = null })
+            } else if (showTrending) {
+                TrendingScreen(
+                    padding = if (maxWidthSafe()) PaddingValues(bottom = 104.dp) else PaddingValues(0.dp),
+                    onMediaClick = { selectedMedia = it },
+                    onBack = { showTrending = false },
+                )
             } else {
                 BoxWithConstraints(Modifier.fillMaxSize()) {
                     if (maxWidth >= 700.dp) Row(Modifier.fillMaxSize()) {
                         NavigationRail(destination, { destination = it }, navStyle)
-                        AppContent(destination, theme, navStyle, signedIn, onSignIn, onSignOut, { theme = it }, { navStyle = it }, PaddingValues(0.dp), { destination = it }, { selectedMedia = it })
+                        AppContent(destination, theme, navStyle, signedIn, onSignIn, onSignOut, { theme = it }, { navStyle = it }, PaddingValues(0.dp), { destination = it }, { selectedMedia = it }, { showTrending = true })
                     } else Box(Modifier.fillMaxSize()) {
-                        AppContent(destination, theme, navStyle, signedIn, onSignIn, onSignOut, { theme = it }, { navStyle = it }, PaddingValues(bottom = 104.dp), { destination = it }, { selectedMedia = it })
+                        AppContent(destination, theme, navStyle, signedIn, onSignIn, onSignOut, { theme = it }, { navStyle = it }, PaddingValues(bottom = 104.dp), { destination = it }, { selectedMedia = it }, { showTrending = true })
                         BottomNavigation(destination, { destination = it }, navStyle, Modifier.align(Alignment.BottomCenter).padding(16.dp))
                     }
                 }
@@ -333,10 +339,12 @@ private fun HikariApp(signedIn: Boolean, onSignIn: () -> Unit, onSignOut: () -> 
     }
 }
 
+private fun maxWidthSafe(): Boolean = false
+
 @Composable
-private fun AppContent(destination: Destination, theme: AppTheme, navStyle: NavigationStyle, signedIn: Boolean, onSignIn: () -> Unit, onSignOut: () -> Unit, onTheme: (AppTheme) -> Unit, onNavStyle: (NavigationStyle) -> Unit, padding: PaddingValues, onDestination: (Destination) -> Unit, onMediaClick: (MediaSummary) -> Unit) {
+private fun AppContent(destination: Destination, theme: AppTheme, navStyle: NavigationStyle, signedIn: Boolean, onSignIn: () -> Unit, onSignOut: () -> Unit, onTheme: (AppTheme) -> Unit, onNavStyle: (NavigationStyle) -> Unit, padding: PaddingValues, onDestination: (Destination) -> Unit, onMediaClick: (MediaSummary) -> Unit, onTrending: () -> Unit) {
     when (destination) {
-        Destination.Home -> HomeScreen(padding, onSearch = { onDestination(Destination.Discover) }, onCalendar = { onDestination(Destination.Calendar) }, onMediaClick = onMediaClick)
+        Destination.Home -> HomeScreen(padding, onSearch = { onDestination(Destination.Discover) }, onCalendar = { onDestination(Destination.Calendar) }, onTrending = onTrending, onMediaClick = onMediaClick)
         Destination.Discover -> DiscoverScreen(padding, onMediaClick)
         Destination.Library -> LibraryScreen(signedIn, padding)
         Destination.Calendar -> CalendarScreen(padding, onMediaClick, signedIn)
@@ -345,7 +353,7 @@ private fun AppContent(destination: Destination, theme: AppTheme, navStyle: Navi
 }
 
 @Composable
-private fun HomeScreen(padding: PaddingValues, onSearch: () -> Unit, onCalendar: () -> Unit, onMediaClick: (MediaSummary) -> Unit, vm: HomeViewModel = hiltViewModel()) {
+private fun HomeScreen(padding: PaddingValues, onSearch: () -> Unit, onCalendar: () -> Unit, onTrending: () -> Unit, onMediaClick: (MediaSummary) -> Unit, vm: HomeViewModel = hiltViewModel()) {
     val state by vm.state.collectAsState()
     LazyColumn(contentPadding = PaddingValues(20.dp, 26.dp, 20.dp, padding.calculateBottomPadding() + 20.dp), verticalArrangement = Arrangement.spacedBy(22.dp)) {
         item { Row(verticalAlignment = Alignment.CenterVertically) { Column(Modifier.weight(1f)) { Text("Good evening", color = MaterialTheme.colorScheme.onSurfaceVariant); Text("Find your next favorite.", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold) }; Box(Modifier.size(44.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primary), contentAlignment = Alignment.Center) { Text("H", color = MaterialTheme.colorScheme.onPrimary, fontWeight = FontWeight.Bold) } } }
@@ -358,9 +366,8 @@ private fun HomeScreen(padding: PaddingValues, onSearch: () -> Unit, onCalendar:
             }
         }
         item { if (state.loading) LoadingRow() else if (state.airing.isEmpty()) EmptyMessage("No upcoming episodes found.") else MediaRow(state.airing, true, onMediaClick) }
-        item { Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) { Text("Trending now", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f)); IconButton(onClick = vm::refresh, enabled = !state.refreshing) { if (state.refreshing) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp) else Icon(Icons.Outlined.Refresh, "Refresh") } } }
+        item { Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) { Text("Trending now", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f)); TextButton(onClick = onTrending) { Text("See all") } } }
         item { if (state.loading) LoadingRow() else if (state.trending.isEmpty()) EmptyMessage("No trending anime found.") else MediaRow(state.trending, false, onMediaClick) }
-        item { HomeRecommendationsSection(onMediaClick) }
     }
 }
 
