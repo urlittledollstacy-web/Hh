@@ -27,6 +27,24 @@ android {
     kotlinOptions { jvmTarget = "17" }
     val anilistClientId = providers.gradleProperty("ANILIST_CLIENT_ID").orElse("")
     defaultConfig { buildConfigField("String", "ANILIST_CLIENT_ID", "\"${anilistClientId.get()}\"") }
+
+    val hikariDebugKeystorePath = System.getenv("HIKARI_DEBUG_KEYSTORE_PATH")
+    val hikariDebugKeystorePassword = System.getenv("HIKARI_DEBUG_KEYSTORE_PASSWORD")
+    if (!hikariDebugKeystorePath.isNullOrBlank() && !hikariDebugKeystorePassword.isNullOrBlank()) {
+        signingConfigs {
+            create("hikariDebug") {
+                storeFile = file(hikariDebugKeystorePath)
+                storePassword = hikariDebugKeystorePassword
+                keyAlias = "hikari-debug"
+                keyPassword = hikariDebugKeystorePassword
+            }
+        }
+        buildTypes {
+            getByName("debug") {
+                signingConfig = signingConfigs.getByName("hikariDebug")
+            }
+        }
+    }
 }
 
 dependencies {
