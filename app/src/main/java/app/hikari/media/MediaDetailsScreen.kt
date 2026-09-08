@@ -4,6 +4,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -35,6 +37,8 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.activity.BackEventCompat
+import androidx.activity.compose.PredictiveBackHandler
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -46,8 +50,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
@@ -63,11 +69,13 @@ import app.hikari.data.remote.AniListLibraryService
 import app.hikari.data.remote.AniListMediaDetailService
 import coil3.compose.AsyncImage
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import javax.inject.Inject
+import kotlin.math.roundToInt
 
 sealed interface MediaDetailState { data object Loading : MediaDetailState; data class Ready(val media: MediaDetail) : MediaDetailState; data class Error(val message: String) : MediaDetailState }
 @HiltViewModel class MediaDetailsViewModel @Inject constructor(private val service: AniListMediaDetailService) : ViewModel() { private val _state = MutableStateFlow<MediaDetailState>(MediaDetailState.Loading); val state: StateFlow<MediaDetailState> = _state.asStateFlow(); fun load(id: Int) { viewModelScope.launch { _state.value = MediaDetailState.Loading; _state.value = runCatching { service.detail(id) }.fold({ MediaDetailState.Ready(it) }, { MediaDetailState.Error("Couldn't load this title. Try again.") }) } } }
@@ -75,12 +83,101 @@ sealed interface MediaTrackingState { data object Hidden : MediaTrackingState; d
 @HiltViewModel class MediaTrackingViewModel @Inject constructor(private val service: AniListLibraryService) : ViewModel() { private val _state = MutableStateFlow<MediaTrackingState>(MediaTrackingState.Hidden); val state: StateFlow<MediaTrackingState> = _state.asStateFlow(); fun open(media: MediaSummary) { viewModelScope.launch { _state.value = MediaTrackingState.Loading; runCatching { service.library(media.type) }.fold({ snapshot -> _state.value = MediaTrackingState.Ready(snapshot.entries.firstOrNull { it.media.id == media.id } ?: LibraryEntry(0, media, "PLANNING", 0, null), snapshot.scoreFormat) }, { _state.value = MediaTrackingState.Error("Couldn't load your AniList list. Make sure you're signed in and try again.") }) } }; fun dismiss() { _state.value = MediaTrackingState.Hidden }; fun save(entry: LibraryEntry, status: String, progress: Int, score: Double) { val current = _state.value as? MediaTrackingState.Ready ?: return; _state.value = current.copy(saving = true, error = null); viewModelScope.launch { runCatching { service.updateEntry(entry, status, progress, score) }.fold({ _state.value = MediaTrackingState.Hidden }, { _state.value = current.copy(saving = false, error = "Couldn't save your AniList changes. Try again.") }) } }; fun retry(media: MediaSummary) = open(media) }
 
 @Composable fun MediaDetailsScreen(summary: MediaSummary, onBack: () -> Unit, vm: MediaDetailsViewModel = hiltViewModel(), trackingVm: MediaTrackingViewModel = hiltViewModel()) {
-    val state by vm.state.collectAsState(); val trackingState by trackingVm.state.collectAsState(); var currentSummary by remember(summary.id) { mutableStateOf(summary) }; var history by remember(summary.id) { mutableStateOf(emptyList<MediaSummary>()) }; var creditTarget by remember(summary.id) { mutableStateOf<CreditTarget?>(null) }
-    LaunchedEffect(currentSummary.id) { vm.load(currentSummary.id) }; val goBack = { if (history.isNotEmpty()) { currentSummary = history.last(); history = history.dropLast(1) } else onBack() }; val openRelation: (MediaSummary) -> Unit = { relation -> history = history + currentSummary; currentSummary = relation }
-    creditTarget?.let { target -> CreditDetailsScreen(target, { creditTarget = null }, onMediaClick = { id, type -> history = history + currentSummary; currentSummary = MediaSummary(id, type, "", null, null, null); creditTarget = null }); return }
-    when (val current = state) { MediaDetailState.Loading -> DetailLoading { goBack() }; is MediaDetailState.Error -> DetailError(current.message, { goBack() }) { vm.load(currentSummary.id) }; is MediaDetailState.Ready -> DetailContent(current.media, { goBack() }, openRelation, { trackingVm.open(it) }) { creditTarget = it } }
-    when (val tracking = trackingState) { MediaTrackingState.Hidden -> Unit; MediaTrackingState.Loading -> TrackingLoadingDialog(); is MediaTrackingState.Ready -> MediaTrackingDialog(tracking.entry, tracking.entry.media.type, tracking.scoreFormat, tracking.saving, tracking.error, { trackingVm.dismiss() }) { status, progress, score -> trackingVm.save(tracking.entry, status, progress, score) }; is MediaTrackingState.Error -> TrackingErrorDialog(tracking.message, { trackingVm.dismiss() }) { trackingVm.retry(currentSummary) } }
+    val state by vm.state.collectAsState()
+    val trackingState by trackingVm.state.collectAsState()
+    var currentSummary by remember(summary.id) { mutableStateOf(summary) }
+    var history by remember(summary.id) { mutableStateOf(emptyList<MediaHistoryEntry>()) }
+    var creditTarget by remember(summary.id) { mutableStateOf<CreditTarget?>(null) }
+    var backProgress by remember { mutableStateOf(0f) }
+    var backSwipeEdge by remember { mutableStateOf(BackEventCompat.EDGE_LEFT) }
+
+    LaunchedEffect(currentSummary.id) { vm.load(currentSummary.id) }
+    val currentMedia = (state as? MediaDetailState.Ready)?.media
+
+    fun goBack() {
+        if (history.isNotEmpty()) {
+            val previous = history.last()
+            currentSummary = previous.summary
+            history = history.dropLast(1)
+        } else {
+            onBack()
+        }
+    }
+
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        history.lastOrNull()?.detail?.let { previous ->
+            DetailContent(
+                media = previous,
+                onBack = {},
+                onOpenRelation = {},
+                onOpenTracking = {},
+                onOpenCredit = {}
+            )
+        }
+
+        val widthPx = with(LocalDensity.current) { maxWidth.toPx() }
+        val direction = if (backSwipeEdge == BackEventCompat.EDGE_RIGHT) -1 else 1
+        val offsetX = if (creditTarget == null && history.isNotEmpty()) (direction * widthPx * backProgress).roundToInt() else 0
+        Box(Modifier.fillMaxSize().offset { IntOffset(offsetX, 0) }) {
+            when (val current = state) {
+                MediaDetailState.Loading -> DetailLoading { goBack() }
+                is MediaDetailState.Error -> DetailError(current.message, { goBack() }) { vm.load(currentSummary.id) }
+                is MediaDetailState.Ready -> DetailContent(
+                    current.media,
+                    { goBack() },
+                    { relation ->
+                        history = history + MediaHistoryEntry(currentSummary, current.media)
+                        currentSummary = relation
+                    },
+                    { trackingVm.open(it) }
+                ) { creditTarget = it }
+            }
+        }
+
+        creditTarget?.let { target ->
+            val creditOffset = (direction * widthPx * backProgress).roundToInt()
+            Box(Modifier.fillMaxSize().offset { IntOffset(creditOffset, 0) }) {
+                CreditDetailsScreen(
+                    target,
+                    { creditTarget = null },
+                    onMediaClick = { id, type ->
+                        currentMedia?.let { detail -> history = history + MediaHistoryEntry(currentSummary, detail) }
+                        currentSummary = MediaSummary(id, type, "", null, null, null)
+                        creditTarget = null
+                    }
+                )
+            }
+        }
+
+        PredictiveBackHandler(enabled = creditTarget != null || history.isNotEmpty()) { progressFlow ->
+            try {
+                progressFlow.collect { event ->
+                    backProgress = event.progress
+                    backSwipeEdge = event.swipeEdge
+                }
+                if (creditTarget != null) {
+                    creditTarget = null
+                } else {
+                    goBack()
+                }
+                backProgress = 0f
+            } catch (e: CancellationException) {
+                backProgress = 0f
+                throw e
+            }
+        }
+    }
+
+    when (val tracking = trackingState) {
+        MediaTrackingState.Hidden -> Unit
+        MediaTrackingState.Loading -> TrackingLoadingDialog()
+        is MediaTrackingState.Ready -> MediaTrackingDialog(tracking.entry, tracking.entry.media.type, tracking.scoreFormat, tracking.saving, tracking.error, { trackingVm.dismiss() }) { status, progress, score -> trackingVm.save(tracking.entry, status, progress, score) }
+        is MediaTrackingState.Error -> TrackingErrorDialog(tracking.message, { trackingVm.dismiss() }) { trackingVm.retry(currentSummary) }
+    }
 }
+
+private data class MediaHistoryEntry(val summary: MediaSummary, val detail: MediaDetail)
+
 @Composable private fun TrackingLoadingDialog() { AlertDialog(onDismissRequest = {}, title = { Text("AniList tracking") }, text = { Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() } }, confirmButton = {}) }
 @Composable private fun TrackingErrorDialog(message: String, onDismiss: () -> Unit, onRetry: () -> Unit) { AlertDialog(onDismissRequest = onDismiss, title = { Text("AniList tracking") }, text = { Text(message, color = MaterialTheme.colorScheme.onSurfaceVariant) }, confirmButton = { Button(onClick = onRetry) { Text("Retry") } }, dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }) }
 @Composable private fun DetailLoading(onBack: () -> Unit) { Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) { IconButton(onClick = onBack, modifier = Modifier.padding(12.dp)) { Icon(Icons.Outlined.ArrowBack, "Back") }; Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() } } }

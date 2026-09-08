@@ -4,12 +4,25 @@ import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import android.widget.Toast
-import androidx.activity.BackEventCompat
 import androidx.activity.ComponentActivity
-import androidx.activity.compose.PredictiveBackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.compose.animation.AnimatedContentTransitionScope
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.slideIntoContainer
+import androidx.compose.animation.slideOutOfContainer
+import androidx.navigation.NavType
+import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.composable
+import androidx.navigation.compose.rememberNavController
+import androidx.navigation.navArgument
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -69,10 +82,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -94,7 +105,6 @@ import app.hikari.profile.ProfileDetails
 import coil3.compose.AsyncImage
 import dagger.hilt.android.AndroidEntryPoint
 import dagger.hilt.android.lifecycle.HiltViewModel
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
@@ -107,7 +117,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import javax.inject.Inject
-import kotlin.math.roundToInt
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
@@ -137,15 +146,98 @@ data class SearchUiState(val query: String = "", val results: List<MediaSummary>
 @HiltViewModel class SearchViewModel @Inject constructor(private val api: AniListGraphQlService) : ViewModel() { private val _state = MutableStateFlow(SearchUiState()); val state: StateFlow<SearchUiState> = _state.asStateFlow(); private var searchJob: Job? = null; fun toggleMode() { val next = if (_state.value.mode == SearchMode.MEDIA) SearchMode.TAGS_GENRES else SearchMode.MEDIA; _state.value = _state.value.copy(mode = next, query = "", results = emptyList(), taxonomyResults = emptyList(), page = 1, hasMore = false, taxonomy = null); searchJob?.cancel() }; fun setQuery(value: String) { val normalized = value.take(80); _state.value = _state.value.copy(query = normalized, results = emptyList(), taxonomyResults = emptyList(), page = 1, hasMore = false, taxonomy = null); searchJob?.cancel(); if (normalized.trim().isBlank()) return; searchJob = viewModelScope.launch { delay(if (_state.value.mode == SearchMode.MEDIA) 350 else 180); searchFirstPage() } }; fun setFilter(filter: SearchMediaFilter) { if (_state.value.filter == filter) return; _state.value = _state.value.copy(filter = filter, results = emptyList(), page = 1, hasMore = false, taxonomy = null); if (_state.value.mode == SearchMode.MEDIA && _state.value.query.trim().isNotBlank()) { searchJob?.cancel(); searchJob = viewModelScope.launch { delay(180); searchFirstPage() } } }; fun selectTaxonomy(item: SearchTaxonomy) { _state.value = _state.value.copy(mode = SearchMode.MEDIA, query = item.name, taxonomy = item, taxonomyResults = emptyList(), results = emptyList(), page = 1, hasMore = false); searchJob?.cancel(); searchJob = viewModelScope.launch { searchFirstPage() } }; fun loadMore() { val current = _state.value; if (current.loadingMore || current.searching || !current.hasMore || current.query.trim().isBlank()) return; viewModelScope.launch { val page = current.page + 1; _state.value = _state.value.copy(loadingMore = true); val next = runCatching { current.taxonomy?.let { api.searchByTaxonomy(it, current.filter.type, page) } ?: api.search(current.query.trim(), current.filter.type, page) }.getOrDefault(emptyList()); _state.value = _state.value.copy(results = (_state.value.results + next).distinctBy { it.id to it.type }, page = page, hasMore = next.size >= 20, loadingMore = false) } }; private suspend fun searchFirstPage() { val current = _state.value; val query = current.query.trim(); if (query.isBlank()) return; _state.value = _state.value.copy(searching = true, loadingMore = false, page = 1, hasMore = false); if (current.mode == SearchMode.TAGS_GENRES) { val matches = runCatching { api.searchTaxonomies(query) }.getOrDefault(emptyList()); if (_state.value.query.trim() != query || _state.value.mode != SearchMode.TAGS_GENRES) return; _state.value = _state.value.copy(taxonomyResults = matches, searching = false); return }; val results = runCatching { current.taxonomy?.let { api.searchByTaxonomy(it, current.filter.type, 1) } ?: api.search(query, current.filter.type, 1) }.getOrDefault(emptyList()); if (_state.value.query.trim() != query || _state.value.mode != SearchMode.MEDIA) return; _state.value = _state.value.copy(results = results, searching = false, page = 1, hasMore = results.size >= 20) }; override fun onCleared() { searchJob?.cancel(); super.onCleared() } }
 
 @Composable private fun HikariApp(signedIn: Boolean, onSignIn: () -> Unit, onSignOut: () -> Unit) {
-    var destination by remember { mutableStateOf(Destination.Home) }; var theme by remember { mutableStateOf(AppTheme.System) }; var palette by remember { mutableStateOf(AppPalette.Pink) }; var navStyle by remember { mutableStateOf(NavigationStyle.Blur) }; var selectedMedia by remember { mutableStateOf<MediaSummary?>(null) }; var showTrending by remember { mutableStateOf(false) }; var backProgress by remember { mutableStateOf(0f) }; var backSwipeEdge by remember { mutableStateOf(BackEventCompat.EDGE_LEFT) }; val colors = hikariColors(theme, isSystemInDarkTheme(), palette)
-    MaterialTheme(colorScheme = colors) { Surface(Modifier.fillMaxSize(), color = colors.background) { BoxWithConstraints(Modifier.fillMaxSize()) {
-        val density = LocalDensity.current; val widthPx = with(density) { maxWidth.toPx() }; val basePadding = if (maxWidth >= 700.dp) PaddingValues(0.dp) else PaddingValues(bottom = 104.dp)
-        if (maxWidth >= 700.dp) Row(Modifier.fillMaxSize()) { NavigationRail(destination, { destination = it }, navStyle); AppContent(destination, theme, palette, navStyle, signedIn, onSignIn, onSignOut, { theme = it }, { palette = it }, { navStyle = it }, basePadding, { destination = it }, { selectedMedia = it }, { showTrending = true }) } else { AppContent(destination, theme, palette, navStyle, signedIn, onSignIn, onSignOut, { theme = it }, { palette = it }, { navStyle = it }, basePadding, { destination = it }, { selectedMedia = it }, { showTrending = true }); BottomNavigation(destination, { destination = it }, navStyle, Modifier.align(Alignment.BottomCenter).padding(16.dp)) }
-        val detailVisible = selectedMedia != null || showTrending; val x = ((if (backSwipeEdge == BackEventCompat.EDGE_RIGHT) -1 else 1) * widthPx * backProgress).roundToInt()
-        if (selectedMedia != null) Box(Modifier.fillMaxSize().offset { IntOffset(x, 0) }) { MediaDetailsScreen(selectedMedia!!, onBack = { selectedMedia = null }) }
-        else if (showTrending) Box(Modifier.fillMaxSize().offset { IntOffset(x, 0) }) { TrendingScreen(padding = PaddingValues(0.dp), onMediaClick = { selectedMedia = it }, onBack = { showTrending = false }) }
-        PredictiveBackHandler(enabled = detailVisible) { progressFlow -> try { progressFlow.collect { event -> backProgress = event.progress; backSwipeEdge = event.swipeEdge }; if (selectedMedia != null) selectedMedia = null else if (showTrending) showTrending = false; backProgress = 0f } catch (e: CancellationException) { backProgress = 0f; throw e } }
-    } } }
+    var destination by remember { mutableStateOf(Destination.Home) }
+    var theme by remember { mutableStateOf(AppTheme.System) }
+    var palette by remember { mutableStateOf(AppPalette.Pink) }
+    var navStyle by remember { mutableStateOf(NavigationStyle.Blur) }
+    val navController = rememberNavController()
+    val mediaEntries = remember { mutableStateMapOf<String, MediaSummary>() }
+    var nextMediaToken by remember { mutableIntStateOf(0) }
+    val colors = hikariColors(theme, isSystemInDarkTheme(), palette)
+
+    fun navigateToMedia(summary: MediaSummary) {
+        val token = "m${++nextMediaToken}"
+        mediaEntries[token] = summary
+        navController.navigate("media/$token")
+    }
+
+    MaterialTheme(colorScheme = colors) {
+        Surface(Modifier.fillMaxSize(), color = colors.background) {
+            BoxWithConstraints(Modifier.fillMaxSize()) {
+                val basePadding = if (maxWidth >= 700.dp) PaddingValues(0.dp) else PaddingValues(bottom = 104.dp)
+
+                NavHost(
+                    navController = navController,
+                    startDestination = "shell",
+                    modifier = Modifier.fillMaxSize(),
+                    enterTransition = {
+                        slideIntoContainer(AnimatedContentTransitionScope.SlideDirection.Left, animationSpec = tween(300))
+                    },
+                    exitTransition = {
+                        slideOutOfContainer(AnimatedContentTransitionScope.SlideDirection.Left, animationSpec = tween(300))
+                    },
+                    popEnterTransition = {
+                        slideIntoContainer(AnimatedContentTransitionScope.SlideDirection.Right, animationSpec = tween(300))
+                    },
+                    popExitTransition = {
+                        slideOutOfContainer(AnimatedContentTransitionScope.SlideDirection.Right, animationSpec = tween(300))
+                    },
+                ) {
+                    composable("shell") {
+                        if (maxWidth >= 700.dp) {
+                            Row(Modifier.fillMaxSize()) {
+                                NavigationRail(destination, { destination = it }, navStyle)
+                                AppContent(
+                                    destination, theme, palette, navStyle, signedIn, onSignIn, onSignOut,
+                                    { theme = it }, { palette = it }, { navStyle = it }, basePadding,
+                                    { destination = it }, ::navigateToMedia, { navController.navigate("trending") }
+                                )
+                            }
+                        } else {
+                            Box(Modifier.fillMaxSize()) {
+                                AppContent(
+                                    destination, theme, palette, navStyle, signedIn, onSignIn, onSignOut,
+                                    { theme = it }, { palette = it }, { navStyle = it }, basePadding,
+                                    { destination = it }, ::navigateToMedia, { navController.navigate("trending") }
+                                )
+                                BottomNavigation(
+                                    destination, { destination = it }, navStyle,
+                                    Modifier.align(Alignment.BottomCenter).padding(16.dp)
+                                )
+                            }
+                        }
+                    }
+
+                    composable("trending") {
+                        TrendingScreen(
+                            padding = PaddingValues(0.dp),
+                            onMediaClick = ::navigateToMedia,
+                            onBack = { navController.popBackStack() }
+                        )
+                    }
+
+                    composable(
+                        route = "media/{token}",
+                        arguments = listOf(navArgument("token") { type = NavType.StringType })
+                    ) { entry ->
+                        val token = entry.arguments?.getString("token")
+                        val summary = token?.let(mediaEntries::get)
+                        if (summary == null) {
+                            LaunchedEffect(token) { navController.popBackStack() }
+                        } else {
+                            DisposableEffect(token) {
+                                onDispose { mediaEntries.remove(token) }
+                            }
+                            MediaDetailsScreen(
+                                summary = summary,
+                                onBack = { navController.popBackStack() }
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 @Composable private fun AppContent(destination: Destination, theme: AppTheme, palette: AppPalette, navStyle: NavigationStyle, signedIn: Boolean, onSignIn: () -> Unit, onSignOut: () -> Unit, onTheme: (AppTheme) -> Unit, onPalette: (AppPalette) -> Unit, onNavStyle: (NavigationStyle) -> Unit, padding: PaddingValues, onDestination: (Destination) -> Unit, onMediaClick: (MediaSummary) -> Unit, onTrending: () -> Unit) { when (destination) { Destination.Home -> HomeScreen(padding, { onDestination(Destination.Discover) }, { onDestination(Destination.Calendar) }, onTrending, onMediaClick); Destination.Discover -> DiscoverScreen(padding, onMediaClick); Destination.Library -> LibraryScreen(signedIn, padding); Destination.Calendar -> CalendarScreen(padding, onMediaClick, signedIn); Destination.Profile -> ProfileScreen(theme, palette, navStyle, signedIn, onSignIn, onSignOut, onTheme, onPalette, onNavStyle, padding) } }
