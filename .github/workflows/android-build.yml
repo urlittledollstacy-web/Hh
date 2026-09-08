@@ -1,4 +1,4 @@
-name: Android Build
+name: Android Build - final navigation verification
 
 on:
   workflow_dispatch:
