@@ -1,0 +1,39 @@
+name: Remove custom nav transitions
+on:
+  push:
+    branches:
+      - codex/create-personal-anilist-android-client
+permissions:
+  contents: write
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: codex/create-personal-anilist-android-client
+          fetch-depth: 0
+      - name: Use Navigation Compose defaults
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('app/src/main/java/app/hikari/MainActivity.kt')
+          s = p.read_text()
+          for line in [
+              'import androidx.compose.animation.AnimatedContentTransitionScope\n',
+              'import androidx.compose.animation.EnterTransition\n',
+              'import androidx.compose.animation.ExitTransition\n',
+              'import androidx.compose.animation.core.tween\n',
+          ]:
+              s = s.replace(line, '')
+          start = s.index('                    enterTransition = {', s.index('NavHost('))
+          end = s.index('                ) {', start)
+          s = s[:start] + s[end:]
+          p.write_text(s)
+          PY
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          rm .github/workflows/remove-custom-nav-transitions.yml
+          git add app/src/main/java/app/hikari/MainActivity.kt .github/workflows/remove-custom-nav-transitions.yml
+          git commit -m 'Use Navigation Compose predictive defaults'
+          git push origin codex/create-personal-anilist-android-client
