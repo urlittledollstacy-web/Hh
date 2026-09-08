@@ -56,8 +56,8 @@ import app.hikari.core.model.LibraryEntry
 import app.hikari.core.model.MediaSummary
 import app.hikari.core.model.MediaType
 import app.hikari.core.model.ScoreFormat
+import app.hikari.data.AniListLibraryRepository
 import app.hikari.data.local.HikariFavoritesRepository
-import app.hikari.data.remote.AniListLibraryService
 import coil3.compose.AsyncImage
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -69,11 +69,13 @@ import kotlin.math.roundToInt
 
 @HiltViewModel
 class LibraryViewModel @Inject constructor(
-    private val api: AniListLibraryService,
+    private val library: AniListLibraryRepository,
     private val favorites: HikariFavoritesRepository,
 ) : ViewModel() {
     private val _state = MutableStateFlow(LibraryUiState())
     val state: StateFlow<LibraryUiState> = _state.asStateFlow()
+
+    private var loadGeneration = 0L
 
     init {
         viewModelScope.launch {
@@ -83,27 +85,59 @@ class LibraryViewModel @Inject constructor(
         }
     }
 
-    fun load(type: MediaType) = viewModelScope.launch {
-        _state.value = _state.value.copy(loading = true, error = null)
-        runCatching { api.library(type) }
-            .onSuccess { snapshot ->
-                _state.value = _state.value.copy(entries = snapshot.entries, scoreFormat = snapshot.scoreFormat, loading = false)
-            }
-            .onFailure { error ->
-                _state.value = _state.value.copy(loading = false, error = error.message ?: "Couldn't load your library.")
-            }
+    fun load(type: MediaType) {
+        val generation = ++loadGeneration
+        _state.value = _state.value.copy(
+            type = type,
+            entries = emptyList(),
+            loading = true,
+            error = null,
+        )
+        viewModelScope.launch {
+            runCatching { library.refresh(type) }
+                .onSuccess { snapshot ->
+                    if (generation == loadGeneration && _state.value.type == type) {
+                        _state.value = _state.value.copy(
+                            entries = snapshot.entries,
+                            scoreFormat = snapshot.scoreFormat,
+                            loading = false,
+                        )
+                    }
+                }
+                .onFailure { error ->
+                    if (generation == loadGeneration && _state.value.type == type) {
+                        _state.value = _state.value.copy(
+                            loading = false,
+                            error = error.message ?: "Couldn't load your library.",
+                        )
+                    }
+                }
+        }
     }
 
-    fun save(type: MediaType, entry: LibraryEntry, status: String, progress: Int, score: Double, onDone: () -> Unit) = viewModelScope.launch {
-        _state.value = _state.value.copy(saving = true, error = null)
-        runCatching { api.updateEntry(entry, status, progress, score) }
-            .onSuccess {
-                _state.value = _state.value.copy(saving = false)
-                load(type)
-                onDone()
-            }
-            .onFailure { error -> _state.value = _state.value.copy(saving = false, error = error.message ?: "Couldn't save your AniList changes.") }
-    }
+    fun save(type: MediaType, entry: LibraryEntry, status: String, progress: Int, score: Double, onDone: () -> Unit) =
+        viewModelScope.launch {
+            _state.value = _state.value.copy(saving = true, error = null)
+            runCatching { library.save(entry, status, progress, score) }
+                .onSuccess { snapshot ->
+                    if (_state.value.type == type) {
+                        _state.value = _state.value.copy(
+                            entries = snapshot.entries,
+                            scoreFormat = snapshot.scoreFormat,
+                            saving = false,
+                        )
+                    } else {
+                        _state.value = _state.value.copy(saving = false)
+                    }
+                    onDone()
+                }
+                .onFailure { error ->
+                    _state.value = _state.value.copy(
+                        saving = false,
+                        error = error.message ?: "Couldn't save your AniList changes.",
+                    )
+                }
+        }
 
     fun toggleFavorite(media: MediaSummary) = viewModelScope.launch {
         val current = _state.value.favorites.any { it.id == media.id && it.type == media.type }
@@ -112,6 +146,7 @@ class LibraryViewModel @Inject constructor(
 }
 
 data class LibraryUiState(
+    val type: MediaType = MediaType.ANIME,
     val entries: List<LibraryEntry> = emptyList(),
     val favorites: List<MediaSummary> = emptyList(),
     val scoreFormat: ScoreFormat = ScoreFormat.POINT_100,
