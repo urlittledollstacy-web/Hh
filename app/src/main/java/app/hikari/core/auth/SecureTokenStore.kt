@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 import dagger.hilt.android.qualifiers.ApplicationContext
+import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -20,6 +21,7 @@ class SecureTokenStore @Inject constructor(@ApplicationContext context: Context)
     fun accessToken(): String? = preferences.getString(TOKEN, null)
     fun saveAccessToken(token: String) = preferences.edit().putString(TOKEN, token).apply()
     fun oauthState(): String? = preferences.getString(OAUTH_STATE, null)
+    fun createAndSaveOAuthState(): String = UUID.randomUUID().toString().also(::saveOAuthState)
     fun saveOAuthState(state: String) = preferences.edit().putString(OAUTH_STATE, state).apply()
     fun clearOAuthState() = preferences.edit().remove(OAUTH_STATE).apply()
     fun clear() = preferences.edit().clear().apply()
