@@ -58,6 +58,17 @@ jobs:
           grep '^org.gradle.java.home=' gradle.properties
           grep '^sdk.dir=' local.properties
 
+      - name: Diagnose patch markers
+        if: hashFiles('.github/patch-debug-v4.py') != ''
+        run: |
+          python3 .github/patch-debug-v4.py
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          rm .github/patch-debug-v4.py
+          git add .github/patch-debug.txt .github/patch-debug-v4.py
+          git commit -m 'Diagnose navigation patch markers'
+          git push origin codex/create-personal-anilist-android-client
+
       - name: Apply navigation fix
         if: hashFiles('.github/apply-navigation-fix-v3.py') != ''
         run: |
