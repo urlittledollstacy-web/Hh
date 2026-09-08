@@ -7,7 +7,7 @@ on:
       - codex/create-personal-anilist-android-client
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build:
@@ -58,29 +58,6 @@ jobs:
           grep '^org.gradle.java.home=' gradle.properties
           grep '^sdk.dir=' local.properties
 
-      - name: Apply navigation fix
-        if: hashFiles('.github/apply-navigation-fix-v3.py') != ''
-        run: |
-          set +e
-          python3 .github/apply-navigation-fix-v3.py > /tmp/navigation-patch.log 2>&1
-          status=$?
-          if [ "$status" -ne 0 ]; then
-            cp /tmp/navigation-patch.log .github/patch-error.txt
-            git config user.name 'github-actions[bot]'
-            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-            git add .github/patch-error.txt
-            git commit -m 'Record navigation patch error'
-            git push origin codex/create-personal-anilist-android-client
-            exit "$status"
-          fi
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          rm .github/apply-navigation-fix.py .github/apply-navigation-fix-v2.py .github/apply-navigation-fix-v3.py .github/patch-debug-v4.py .github/patch-debug.txt
-          rm .github/workflows/apply-navigation-fix.yml
-          git add app/src/main/java/app/hikari/MainActivity.kt app/src/main/java/app/hikari/media/MediaDetailsScreen.kt .github/apply-navigation-fix.py .github/apply-navigation-fix-v2.py .github/apply-navigation-fix-v3.py .github/patch-debug-v4.py .github/patch-debug.txt .github/workflows/apply-navigation-fix.yml
-          git commit -m 'Fix navigation stack and predictive back'
-          git push origin codex/create-personal-anilist-android-client
-
       - name: Verify toolchain
         run: |
           java -version
@@ -91,7 +68,11 @@ jobs:
       - name: Build debug APK
         env:
           ANILIST_CLIENT_ID: ${{ secrets.ANILIST_CLIENT_ID }}
-        run: gradle :app:assembleDebug --no-daemon --stacktrace --info -PANILIST_CLIENT_ID="$ANILIST_CLIENT_ID"
+        run: |
+          set +e
+          gradle :app:assembleDebug --no-daemon --stacktrace --info -PANILIST_CLIENT_ID="$ANILIST_CLIENT_ID" 2>&1 | tee build.log
+          status=${PIPESTATUS[0]}
+          exit "$status"
 
       - name: Upload debug APK
         if: always()
@@ -110,3 +91,11 @@ jobs:
             app/build/reports/**
             app/build/outputs/logs/**
           if-no-files-found: ignore
+
+      - name: Upload compiler log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hikari-compiler-log
+          path: build.log
+          if-no-files-found: warn
