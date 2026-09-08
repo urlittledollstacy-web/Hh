@@ -30,6 +30,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -44,7 +47,7 @@ import androidx.lifecycle.viewModelScope
 import app.hikari.core.auth.SecureTokenStore
 import app.hikari.core.model.MediaType
 import coil3.compose.AsyncImage
-import dagger.hilt.android.lifecycle.HiltViewModel
+aimport dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -76,13 +79,13 @@ internal class AniListCreditService @Inject constructor(private val client: OkHt
     }
     suspend fun person(id: Int): CreditDetail = withContext(Dispatchers.IO) {
         val query = """
-            query(${'$'}id:Int!){ Staff(id:${'$'}id){ name{full} image{large} description primaryOccupations staffMedia(perPage:18){nodes{id type title{userPreferred romaji english native} coverImage{large}}} voiceActingRoles(perPage:18){edges{media{id type title{userPreferred romaji english native} coverImage{large}}}} } }
+            query(${'$'}id:Int!){ Staff(id:${'$'}id){ name{full} image{large} description primaryOccupations staffMedia(perPage:18){nodes{id type title{userPreferred romaji english native} coverImage{large}}} characterMedia(perPage:18){nodes{id type title{userPreferred romaji english native} coverImage{large}}} } }
         """.trimIndent()
         val person = execute(query, mapOf("id" to id)).getJSONObject("data").getJSONObject("Staff")
         val occupations = person.optJSONArray("primaryOccupations")?.toStringList().orEmpty()
         val staffMedia = mediaList(person.optJSONObject("staffMedia")?.optJSONArray("nodes"))
-        val voiceMedia = person.optJSONObject("voiceActingRoles")?.optJSONArray("edges")?.let { edges -> List(edges.length()) { edges.getJSONObject(it).optJSONObject("media") }.mapNotNull { media(it) } }.orEmpty()
-        CreditDetail(person.optJSONObject("name")?.optString("full").orEmpty().ifBlank { "Unknown person" }, person.optJSONObject("image")?.optString("large")?.takeIf { it.isNotBlank() }, cleanDescription(person.optString("description")), occupations.joinToString(" • ").takeIf { it.isNotBlank() }, (staffMedia + voiceMedia).distinctBy { it.id to it.type })
+        val characterMedia = mediaList(person.optJSONObject("characterMedia")?.optJSONArray("nodes"))
+        CreditDetail(person.optJSONObject("name")?.optString("full").orEmpty().ifBlank { "Unknown person" }, person.optJSONObject("image")?.optString("large")?.takeIf { it.isNotBlank() }, cleanDescription(person.optString("description")), occupations.joinToString(" • ").takeIf { it.isNotBlank() }, (staffMedia + characterMedia).distinctBy { it.id to it.type })
     }
     private fun mediaList(nodes: JSONArray?): List<CreditMedia> = nodes?.let { List(it.length()) { i -> media(it.getJSONObject(i)) }.filterNotNull() }.orEmpty()
     private fun media(value: JSONObject?): CreditMedia? { if (value == null) return null; val type = runCatching { MediaType.valueOf(value.optString("type")) }.getOrNull() ?: return null; val title = value.optJSONObject("title")?.let { title -> listOf("userPreferred", "english", "romaji", "native").asSequence().map { title.optString(it) }.firstOrNull { it.isNotBlank() && it != "null" } } ?: "Untitled"; return CreditMedia(value.optInt("id"), type, title, value.optJSONObject("coverImage")?.optString("large")?.takeIf { it.isNotBlank() }) }
