@@ -4,6 +4,7 @@ import app.hikari.core.auth.SecureTokenStore
 import app.hikari.core.model.MediaSummary
 import app.hikari.core.model.MediaType
 import app.hikari.profile.AniListProfile
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
@@ -25,18 +26,18 @@ class AniListGraphQlService @Inject constructor(
     private val client: OkHttpClient,
     private val tokenStore: SecureTokenStore,
 ) {
-    suspend fun trending(type: MediaType, page: Int = 1): List<MediaSummary> = runCatching {
-        mediaPage(
+    suspend fun trending(type: MediaType, page: Int = 1): List<MediaSummary> {
+        return mediaPage(
             "query(\$page:Int!, \$type:MediaType!){Page(page:\$page,perPage:20){media(type:\$type,sort:TRENDING_DESC){id type title{userPreferred romaji english native} coverImage{large} averageScore episodes chapters}}}",
             mapOf("page" to page, "type" to type.name), type,
         )
-    }.getOrDefault(emptyList())
+    }
 
-    suspend fun airingSoon(page: Int = 1, perPage: Int = 12, now: Long = System.currentTimeMillis() / 1000): List<MediaSummary> = runCatching {
+    suspend fun airingSoon(page: Int = 1, perPage: Int = 12, now: Long = System.currentTimeMillis() / 1000): List<MediaSummary> {
         val query = "query(\$page:Int!, \$perPage:Int!, \$now:Int!){Page(page:\$page,perPage:\$perPage){airingSchedules(notYetAired:true,airingAt_greater:\$now,sort:TIME){episode airingAt media{id type title{userPreferred romaji english native} coverImage{large} averageScore episodes chapters}}}}"
         val data = execute(query, mapOf("page" to page, "perPage" to perPage, "now" to now))
             .getJSONObject("data").getJSONObject("Page").getJSONArray("airingSchedules")
-        List(data.length()) { index ->
+        return List(data.length()) { index ->
             val media = data.getJSONObject(index).getJSONObject("media")
             val titleObject = media.getJSONObject("title")
             val title = preferredTitle(titleObject)
@@ -47,34 +48,34 @@ class AniListGraphQlService @Inject constructor(
                 episodesOrChapters = media.optInt("episodes").takeIf { it != 0 },
             )
         }
-    }.getOrDefault(emptyList())
+    }
 
-    suspend fun search(query: String, type: MediaType?, page: Int = 1): List<MediaSummary> = runCatching {
+    suspend fun search(query: String, type: MediaType?, page: Int = 1): List<MediaSummary> {
         val normalized = query.trim()
         require(normalized.isNotBlank())
         val typeClause = type?.let { ",type:${it.name}" }.orEmpty()
         val searchQuery = "query(\$page:Int!, \$search:String!){Page(page:\$page,perPage:20){media(search:\$search$typeClause,sort:SEARCH_MATCH){id type title{userPreferred romaji english native} coverImage{large} averageScore episodes chapters}}}"
-        mediaPage(searchQuery, mapOf("page" to page, "search" to normalized), type)
-    }.getOrDefault(emptyList())
+        return mediaPage(searchQuery, mapOf("page" to page, "search" to normalized), type)
+    }
 
     @Volatile
     private var taxonomyCache: List<SearchTaxonomy>? = null
 
-    suspend fun searchTaxonomies(query: String): List<SearchTaxonomy> = runCatching {
+    suspend fun searchTaxonomies(query: String): List<SearchTaxonomy> {
         val normalized = query.trim()
         require(normalized.isNotBlank())
         val all = taxonomyCache ?: loadTaxonomies().also { taxonomyCache = it }
-        all.filter { it.name.contains(normalized, ignoreCase = true) }
+        return all.filter { it.name.contains(normalized, ignoreCase = true) }
             .sortedWith(compareBy<SearchTaxonomy> { !it.name.equals(normalized, ignoreCase = true) }.thenBy { it.name.lowercase() })
             .take(60)
-    }.getOrDefault(emptyList())
+    }
 
-    suspend fun searchByTaxonomy(taxonomy: SearchTaxonomy, type: MediaType?, page: Int = 1): List<MediaSummary> = runCatching {
+    suspend fun searchByTaxonomy(taxonomy: SearchTaxonomy, type: MediaType?, page: Int = 1): List<MediaSummary> {
         val typeClause = type?.let { ",type:${it.name}" }.orEmpty()
         val argument = if (taxonomy.kind == SearchTaxonomyKind.GENRE) "genre" else "tag"
         val searchQuery = "query(\$page:Int!, \$name:String!){Page(page:\$page,perPage:20){media($argument:\$name$typeClause,sort:POPULARITY_DESC){id type title{userPreferred romaji english native} coverImage{large} averageScore episodes chapters}}}"
-        mediaPage(searchQuery, mapOf("page" to page, "name" to taxonomy.name), type)
-    }.getOrDefault(emptyList())
+        return mediaPage(searchQuery, mapOf("page" to page, "name" to taxonomy.name), type)
+    }
 
     private suspend fun loadTaxonomies(): List<SearchTaxonomy> {
         val query = "query{GenreCollection MediaTagCollection{id name isAdult}}"
@@ -96,7 +97,7 @@ class AniListGraphQlService @Inject constructor(
         return result
     }
 
-    suspend fun personalizedRecommendations(): List<MediaSummary> = runCatching {
+    suspend fun personalizedRecommendations(): List<MediaSummary> {
         val viewer = execute("query{Viewer{id}}", emptyMap())
             .getJSONObject("data")
             .getJSONObject("Viewer")
@@ -122,7 +123,7 @@ class AniListGraphQlService @Inject constructor(
             }
         }
 
-        grouped.values
+        return grouped.values
             .sortedWith(
                 compareByDescending<RecommendationCandidate> { it.occurrences }
                     .thenByDescending { it.ratingTotal }
@@ -131,7 +132,7 @@ class AniListGraphQlService @Inject constructor(
             .map { it.media }
             .distinctBy { it.id to it.type }
             .take(10)
-    }.getOrDefault(emptyList())
+    }
 
     private suspend fun loadRecommendationCandidates(
         userId: Int,
@@ -199,9 +200,13 @@ class AniListGraphQlService @Inject constructor(
         val aggregateVolumesRead = manga.optInt("volumesRead")
         val aggregateMangaMeanScore = manga.optDouble("meanScore", 0.0)
 
-        val syncedStats = runCatching {
+        val syncedStats = try {
             loadViewerListStats(viewer.getInt("id"))
-        }.getOrNull()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Throwable) {
+            null
+        }
 
         val stats = syncedStats ?: ListStats(
             animeCount = aggregateAnimeCount,
