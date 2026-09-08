@@ -306,6 +306,9 @@ class AniListGraphQlService @Inject constructor(
         }.build()
         client.newCall(request).execute().use { response ->
             val payload = response.body?.string().orEmpty()
+            if (response.code == 403) {
+                throw CancellationException("AniList API temporarily unavailable (403)")
+            }
             check(response.isSuccessful) { "AniList request failed (${response.code})" }
             JSONObject(payload).also { result -> check(!result.has("errors")) { result.getJSONArray("errors").toString() } }
         }
