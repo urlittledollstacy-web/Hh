@@ -14,7 +14,7 @@ coil = "3.0.4"
 securityCrypto = "1.1.0-alpha06"
 okhttp = "4.12.0"
 browser = "1.8.0"
-navigation = "2.9.8"
+navigation = "2.10.0"
 ksp = "2.0.21-1.0.28"
 
 [libraries]
