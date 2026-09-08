@@ -59,15 +59,14 @@ jobs:
           grep '^sdk.dir=' local.properties
 
       - name: Apply navigation fix
-        if: hashFiles('.github/apply-navigation-fix-v2.py') != ''
+        if: hashFiles('.github/apply-navigation-fix-v3.py') != ''
         run: |
-          python3 .github/apply-navigation-fix-v2.py
+          python3 .github/apply-navigation-fix-v3.py
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          rm .github/apply-navigation-fix.py
-          rm .github/apply-navigation-fix-v2.py
+          rm .github/apply-navigation-fix.py .github/apply-navigation-fix-v2.py .github/apply-navigation-fix-v3.py
           rm .github/workflows/apply-navigation-fix.yml
-          git add app/src/main/java/app/hikari/MainActivity.kt app/src/main/java/app/hikari/media/MediaDetailsScreen.kt .github/apply-navigation-fix.py .github/apply-navigation-fix-v2.py .github/workflows/apply-navigation-fix.yml
+          git add app/src/main/java/app/hikari/MainActivity.kt app/src/main/java/app/hikari/media/MediaDetailsScreen.kt .github/apply-navigation-fix.py .github/apply-navigation-fix-v2.py .github/apply-navigation-fix-v3.py .github/workflows/apply-navigation-fix.yml
           git commit -m 'Fix navigation stack and predictive back'
           git push origin codex/create-personal-anilist-android-client
 
