@@ -212,7 +212,7 @@ fun CalendarScreen(
                         Text(day.label.uppercase(), style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant)
                         Spacer(Modifier.height(4.dp))
                         Text(day.number, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface)
-                        if (day.isToday) Box(Modifier.padding(top = 5.dp).size(4.dp).clip(CircleShape).background(if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.primary))
+                        if (selected) Box(Modifier.padding(top = 5.dp).size(4.dp).clip(CircleShape).background(MaterialTheme.colorScheme.onPrimary))
                     }
                 }
             }
