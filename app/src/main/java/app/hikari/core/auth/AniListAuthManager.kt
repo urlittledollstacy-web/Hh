@@ -5,6 +5,7 @@ import android.content.Intent
 import android.net.Uri
 import androidx.browser.customtabs.CustomTabsIntent
 import app.hikari.BuildConfig
+import java.security.MessageDigest
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -16,6 +17,7 @@ class AniListAuthManager @Inject constructor(
         val clientId = BuildConfig.ANILIST_CLIENT_ID
         if (clientId.isBlank()) return AuthStartResult.MissingClientId
 
+        val state = tokenStore.createAndSaveOAuthState()
         val uri = Uri.Builder()
             .scheme("https")
             .authority("anilist.co")
@@ -25,6 +27,7 @@ class AniListAuthManager @Inject constructor(
             .appendPath("authorize")
             .appendQueryParameter("client_id", clientId)
             .appendQueryParameter("response_type", "token")
+            .appendQueryParameter("state", state)
             .build()
 
         CustomTabsIntent.Builder().build().launchUrl(context, uri)
@@ -35,13 +38,23 @@ class AniListAuthManager @Inject constructor(
         val data = intent.data ?: return null
         if (data.scheme != "hikari" || data.host != "oauth") return null
 
-        val fragment = data.fragment ?: return AuthCallbackResult.Error("AniList did not return an access token.")
+        val fragment = data.fragment ?: run {
+            tokenStore.clearOAuthState()
+            return AuthCallbackResult.Error("AniList did not return an access token.")
+        }
         val values = fragment.split('&')
             .mapNotNull { part ->
                 val pieces = part.split('=', limit = 2)
                 if (pieces.size == 2) pieces[0] to Uri.decode(pieces[1]) else null
             }
             .toMap()
+
+        val expectedState = tokenStore.oauthState()
+        val returnedState = values["state"]
+        tokenStore.clearOAuthState()
+        if (expectedState == null || returnedState == null || !constantTimeEquals(expectedState, returnedState)) {
+            return AuthCallbackResult.Error("Invalid AniList OAuth state.")
+        }
 
         values["error"]?.let { error ->
             return AuthCallbackResult.Error(values["error_description"] ?: error)
@@ -57,6 +70,10 @@ class AniListAuthManager @Inject constructor(
 
     companion object {
         const val REDIRECT_URI = "hikari://oauth"
+
+        private fun constantTimeEquals(first: String, second: String): Boolean {
+            return MessageDigest.isEqual(first.toByteArray(Charsets.UTF_8), second.toByteArray(Charsets.UTF_8))
+        }
     }
 }
 
