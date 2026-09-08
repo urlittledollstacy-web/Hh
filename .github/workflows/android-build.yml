@@ -1,4 +1,4 @@
-name: Android Build - final navigation verification
+name: Android Build
 
 on:
   workflow_dispatch:
@@ -7,7 +7,7 @@ on:
       - codex/create-personal-anilist-android-client
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build:
@@ -20,96 +20,6 @@ jobs:
         with:
           ref: codex/create-personal-anilist-android-client
           fetch-depth: 0
-
-      # ONE-TIME FIX: move predictive-back transition handling into Navigation Compose 2.10,
-      # explicitly opt into system predictive back, then remove this mutation block from the
-      # workflow before committing the source changes. The current run continues with the fixed tree.
-      - name: Apply predictive back fix
-        run: |
-          python3 <<'PY'
-          from pathlib import Path
-
-          branch = "codex/create-personal-anilist-android-client"
-
-          versions = Path("gradle/libs.versions.toml")
-          text = versions.read_text()
-          text = text.replace('navigation = "2.9.8"', 'navigation = "2.10.0"')
-          versions.write_text(text)
-
-          manifest = Path("app/src/main/AndroidManifest.xml")
-          text = manifest.read_text()
-          if 'android:enableOnBackInvokedCallback="true"' not in text:
-              text = text.replace(
-                  'android:allowBackup="false"',
-                  'android:allowBackup="false"\n        android:enableOnBackInvokedCallback="true"',
-                  1,
-              )
-          manifest.write_text(text)
-
-          main = Path("app/src/main/java/app/hikari/MainActivity.kt")
-          text = main.read_text()
-          if 'predictivePopEnterTransition' not in text:
-              text = text.replace(
-                  'import androidx.activity.ComponentActivity\n',
-                  'import androidx.activity.BackEventCompat\nimport androidx.activity.ComponentActivity\n',
-                  1,
-              )
-              text = text.replace(
-                  'import androidx.navigation.NavType\n',
-                  'import androidx.compose.animation.AnimatedContentTransitionScope.SlideDirection\n'
-                  'import androidx.compose.animation.core.tween\n'
-                  'import androidx.compose.animation.slideIntoContainer\n'
-                  'import androidx.compose.animation.slideOutOfContainer\n'
-                  'import androidx.navigation.NavType\n',
-                  1,
-              )
-              old = '''                NavHost(
-                    navController = navController,
-                    startDestination = "shell",
-                    modifier = Modifier.fillMaxSize(),
-                ) {'''
-              new = '''                NavHost(
-                    navController = navController,
-                    startDestination = "shell",
-                    modifier = Modifier.fillMaxSize(),
-                    enterTransition = { slideIntoContainer(SlideDirection.Left, tween(300)) },
-                    exitTransition = { slideOutOfContainer(SlideDirection.Left, tween(300)) },
-                    popEnterTransition = { slideIntoContainer(SlideDirection.Right, tween(300)) },
-                    popExitTransition = { slideOutOfContainer(SlideDirection.Right, tween(300)) },
-                    predictivePopEnterTransition = { swipeEdge ->
-                        if (swipeEdge == BackEventCompat.EDGE_RIGHT) {
-                            slideIntoContainer(SlideDirection.Left, tween(300))
-                        } else {
-                            slideIntoContainer(SlideDirection.Right, tween(300))
-                        }
-                    },
-                    predictivePopExitTransition = { swipeEdge ->
-                        if (swipeEdge == BackEventCompat.EDGE_RIGHT) {
-                            slideOutOfContainer(SlideDirection.Left, tween(300))
-                        } else {
-                            slideOutOfContainer(SlideDirection.Right, tween(300))
-                        }
-                    },
-                ) {'''
-              if old not in text:
-                  raise SystemExit("NavHost insertion point not found")
-              text = text.replace(old, new, 1)
-          main.write_text(text)
-
-          workflow = Path(".github/workflows/android-build.yml")
-          workflow_text = workflow.read_text()
-          start = workflow_text.index('      # ONE-TIME FIX:')
-          end = workflow_text.index('      - name: Set up JDK 17', start)
-          workflow_text = workflow_text[:start] + workflow_text[end:]
-          workflow_text = workflow_text.replace('permissions:\n  contents: write', 'permissions:\n  contents: read', 1)
-          workflow.write_text(workflow_text)
-          PY
-
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add gradle/libs.versions.toml app/src/main/AndroidManifest.xml app/src/main/java/app/hikari/MainActivity.kt .github/workflows/android-build.yml
-          git commit -m "Enable predictive back navigation"
-          git push origin "HEAD:${branch}"
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
