@@ -21,12 +21,17 @@ data class LibrarySnapshot(
     val scoreFormat: ScoreFormat,
 )
 
+interface AniListLibraryRemote {
+    suspend fun library(type: MediaType): LibrarySnapshot
+    suspend fun updateEntry(entry: LibraryEntry, status: String, progress: Int, score: Double): LibraryEntry
+}
+
 @Singleton
 class AniListLibraryService @Inject constructor(
     private val client: OkHttpClient,
     private val tokenStore: SecureTokenStore,
-) {
-    suspend fun library(type: MediaType): LibrarySnapshot = withContext(Dispatchers.IO) {
+) : AniListLibraryRemote {
+    override suspend fun library(type: MediaType): LibrarySnapshot = withContext(Dispatchers.IO) {
         val query = "query(\$userId:Int!,\$type:MediaType!){MediaListCollection(userId:\$userId,type:\$type){lists{name entries{id status score progress media{id type title{userPreferred romaji english native} coverImage{large} averageScore episodes chapters}}}}}"
         val viewer = execute("query{Viewer{id mediaListOptions{scoreFormat}}}", emptyMap()).getJSONObject("data").getJSONObject("Viewer")
         val scoreFormat = parseScoreFormat(viewer.getJSONObject("mediaListOptions").optString("scoreFormat"))
@@ -68,7 +73,7 @@ class AniListLibraryService @Inject constructor(
         return@withContext LibrarySnapshot(unique.values.toList(), scoreFormat)
     }
 
-    suspend fun updateEntry(entry: LibraryEntry, status: String, progress: Int, score: Double) = withContext(Dispatchers.IO) {
+    override suspend fun updateEntry(entry: LibraryEntry, status: String, progress: Int, score: Double): LibraryEntry = withContext(Dispatchers.IO) {
         // New entries follow AniList's documented create shape: omit id, and avoid sending
         // an explicit zero score because a new entry already has no score by default.
         val hasExistingEntry = entry.id > 0
@@ -91,7 +96,16 @@ class AniListLibraryService @Inject constructor(
             put("progress", progress)
             if (includeScore) put("score", score)
         }
-        execute(mutation, variables)
+        val saved = execute(mutation, variables)
+            .getJSONObject("data")
+            .getJSONObject("SaveMediaListEntry")
+        LibraryEntry(
+            id = saved.getInt("id"),
+            media = entry.media,
+            status = saved.optString("status", status),
+            progress = saved.optInt("progress", progress),
+            score = saved.optDouble("score", 0.0).takeIf { it > 0.0 },
+        )
     }
 
     private fun parseScoreFormat(value: String): ScoreFormat = when (value) {

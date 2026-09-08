@@ -32,4 +32,23 @@ interface HikariFavoriteDao {
 
     @Query("DELETE FROM hikari_favorites WHERE mediaId = :mediaId AND type = :type")
     suspend fun remove(mediaId: Int, type: MediaType)
+
+    @Query(
+        """
+        UPDATE hikari_favorites
+        SET title = :title,
+            coverUrl = :coverUrl,
+            averageScore = :averageScore,
+            episodesOrChapters = :episodesOrChapters
+        WHERE mediaId = :mediaId AND type = :type
+        """,
+    )
+    suspend fun updateMetadata(
+        mediaId: Int,
+        type: MediaType,
+        title: String,
+        coverUrl: String?,
+        averageScore: Int?,
+        episodesOrChapters: Int?,
+    )
 }

@@ -45,7 +45,9 @@ import app.hikari.core.auth.SecureTokenStore
 import app.hikari.core.model.MediaType
 import coil3.compose.AsyncImage
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -96,7 +98,26 @@ internal sealed interface CreditUiState { data object Loading : CreditUiState; d
 @HiltViewModel
 internal class CreditDetailsViewModel @Inject constructor(private val service: AniListCreditService) : ViewModel() {
     private val _state = MutableStateFlow<CreditUiState>(CreditUiState.Loading); val state: StateFlow<CreditUiState> = _state.asStateFlow()
-    fun load(target: CreditTarget) { viewModelScope.launch { _state.value = CreditUiState.Loading; _state.value = runCatching { if (target.type == CreditType.CHARACTER) service.character(target.id) else service.person(target.id) }.fold({ CreditUiState.Ready(it) }, { CreditUiState.Error("Couldn't load this profile. Try again.") }) } }
+    private var loadJob: Job? = null
+    private var generation = 0L
+
+    fun load(target: CreditTarget) {
+        val requestGeneration = ++generation
+        loadJob?.cancel()
+        _state.value = CreditUiState.Loading
+        loadJob = viewModelScope.launch {
+            try {
+                val detail = if (target.type == CreditType.CHARACTER) service.character(target.id) else service.person(target.id)
+                if (requestGeneration == generation) _state.value = CreditUiState.Ready(detail)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Throwable) {
+                if (requestGeneration == generation) {
+                    _state.value = CreditUiState.Error("Couldn't load this profile. Try again.")
+                }
+            }
+        }
+    }
 }
 
 @Composable

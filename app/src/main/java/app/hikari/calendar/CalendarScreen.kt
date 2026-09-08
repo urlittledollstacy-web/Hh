@@ -49,14 +49,18 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import app.hikari.core.model.AiringScheduleEntry
 import app.hikari.core.model.MediaSummary
+import app.hikari.core.model.MediaType
+import app.hikari.data.AniListLibraryRepository
 import app.hikari.data.remote.AniListCalendarService
-import app.hikari.data.remote.AniListLibraryService
 import coil3.compose.AsyncImage
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Calendar
@@ -79,15 +83,30 @@ data class CalendarUiState(
 @HiltViewModel
 class CalendarViewModel @Inject constructor(
     private val calendarApi: AniListCalendarService,
-    private val libraryApi: AniListLibraryService,
+    private val library: AniListLibraryRepository,
 ) : ViewModel() {
     private val _state = MutableStateFlow(CalendarUiState())
     val state: StateFlow<CalendarUiState> = _state.asStateFlow()
     private var libraryIds: Set<Int> = emptySet()
-    private var libraryLoaded = false
     private var allEntries: List<AiringScheduleEntry> = emptyList()
+    private var refreshJob: Job? = null
+    private var libraryRefreshJob: Job? = null
 
-    init { refresh() }
+    init {
+        viewModelScope.launch {
+            library.observe(MediaType.ANIME).filterNotNull().collect { snapshot ->
+                libraryIds = snapshot.entries
+                    .filter { it.status == "CURRENT" }
+                    .mapTo(mutableSetOf()) { it.media.id }
+                val current = _state.value
+                _state.value = current.copy(
+                    entries = entriesFor(current.selectedDay, current.showMine),
+                    myEntries = allEntries.filter { it.mediaId in libraryIds },
+                )
+            }
+        }
+        refresh()
+    }
 
     fun selectDay(index: Int) {
         val current = _state.value
@@ -97,50 +116,60 @@ class CalendarViewModel @Inject constructor(
 
     fun setShowMine(value: Boolean) {
         val current = _state.value
-        if (!value) {
-            _state.value = current.copy(showMine = false, entries = entriesFor(current.selectedDay, false))
-            return
-        }
-        if (libraryLoaded) {
-            _state.value = current.copy(showMine = true, entries = entriesFor(current.selectedDay, true))
-            return
-        }
-        _state.value = current.copy(showMine = true, loading = true, error = null)
-        viewModelScope.launch {
-            loadLibrary()
-            val latest = _state.value
-            _state.value = latest.copy(
-                showMine = true,
-                loading = false,
-                entries = entriesFor(latest.selectedDay, true),
-            )
-        }
-    }
-
-    fun refresh() = viewModelScope.launch {
-        _state.value = _state.value.copy(loading = true, error = null)
-        val days = buildDays()
-        val start = days.firstOrNull()?.start ?: dayStart(System.currentTimeMillis())
-        val end = (days.lastOrNull()?.start ?: start) + DAY_SECONDS
-        val result = runCatching { calendarApi.airingSchedule(start, end) }
-        val wantsMine = _state.value.showMine
-        if (wantsMine) loadLibrary()
-        allEntries = result.getOrDefault(emptyList()).distinctBy { it.id }.sortedBy { it.airingAt }
-        _state.value = CalendarUiState(
-            days = days,
-            selectedDay = 0,
-            entries = entriesFor(days, 0, wantsMine),
-            myEntries = allEntries.filter { it.mediaId in libraryIds },
-            showMine = wantsMine,
-            loading = false,
-            error = result.exceptionOrNull()?.message?.takeIf { allEntries.isEmpty() },
+        _state.value = current.copy(
+            showMine = value,
+            entries = entriesFor(current.selectedDay, value),
+            error = null,
         )
+        if (value) refreshLibrary()
     }
 
-    private suspend fun loadLibrary() {
-        val library = runCatching { libraryApi.library(app.hikari.core.model.MediaType.ANIME) }.getOrNull()
-        libraryIds = library?.entries.orEmpty().filter { it.status == "CURRENT" }.map { it.media.id }.toSet()
-        libraryLoaded = library != null
+    fun refresh() {
+        refreshJob?.cancel()
+        _state.value = _state.value.copy(loading = true, error = null)
+        refreshJob = viewModelScope.launch {
+            val days = buildDays()
+            val start = days.firstOrNull()?.start ?: dayStart(System.currentTimeMillis())
+            val end = (days.lastOrNull()?.start ?: start) + DAY_SECONDS
+            try {
+                val result = calendarApi.airingSchedule(start, end)
+                allEntries = result.distinctBy { it.id }.sortedBy { it.airingAt }
+                val wantsMine = _state.value.showMine
+                _state.value = CalendarUiState(
+                    days = days,
+                    selectedDay = 0,
+                    entries = entriesFor(days, 0, wantsMine),
+                    myEntries = allEntries.filter { it.mediaId in libraryIds },
+                    showMine = wantsMine,
+                    loading = false,
+                )
+                if (wantsMine) refreshLibrary()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                _state.value = _state.value.copy(
+                    loading = false,
+                    error = error.message ?: "Couldn't load the airing calendar.",
+                )
+            }
+        }
+    }
+
+    private fun refreshLibrary() {
+        libraryRefreshJob?.cancel()
+        libraryRefreshJob = viewModelScope.launch {
+            try {
+                library.refresh(MediaType.ANIME)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                if (_state.value.showMine) {
+                    _state.value = _state.value.copy(
+                        error = error.message ?: "Couldn't refresh your AniList library.",
+                    )
+                }
+            }
+        }
     }
 
     private fun entriesFor(index: Int, showMine: Boolean): List<AiringScheduleEntry> {

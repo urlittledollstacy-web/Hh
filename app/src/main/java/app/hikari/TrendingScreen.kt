@@ -45,6 +45,7 @@ import app.hikari.core.model.MediaType
 import app.hikari.data.remote.AniListGraphQlService
 import coil3.compose.AsyncImage
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -57,6 +58,7 @@ data class TrendingUiState(
     val loading: Boolean = true,
     val loadingMore: Boolean = false,
     val hasMore: Boolean = true,
+    val error: String? = null,
 )
 
 @HiltViewModel
@@ -76,16 +78,26 @@ class TrendingViewModel @Inject constructor(
         if (current.loadingMore || !current.hasMore) return
         viewModelScope.launch {
             val nextPage = page + 1
-            _state.value = current.copy(loadingMore = true)
-            val next = api.trending(MediaType.ANIME, nextPage)
-            page = nextPage
-            val merged = (_state.value.items + next).distinctBy { it.id to it.type }
-            _state.value = TrendingUiState(
-                items = merged,
-                loading = false,
-                loadingMore = false,
-                hasMore = next.size >= 20,
-            )
+            _state.value = current.copy(loadingMore = true, error = null)
+            try {
+                val next = api.trending(MediaType.ANIME, nextPage)
+                page = nextPage
+                val merged = (_state.value.items + next).distinctBy { it.id to it.type }
+                _state.value = TrendingUiState(
+                    items = merged,
+                    loading = false,
+                    loadingMore = false,
+                    hasMore = next.size >= 20,
+                )
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Throwable) {
+                _state.value = current.copy(
+                    loading = false,
+                    loadingMore = false,
+                    error = "Couldn't load trending anime. Try again.",
+                )
+            }
         }
     }
 }
@@ -130,7 +142,7 @@ fun TrendingScreen(
             }
         } else if (state.items.isEmpty()) {
             Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
-                Text("No trending anime found.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(state.error ?: "No trending anime found.", color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         } else {
             LazyVerticalGrid(

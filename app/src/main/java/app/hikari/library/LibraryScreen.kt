@@ -56,24 +56,30 @@ import app.hikari.core.model.LibraryEntry
 import app.hikari.core.model.MediaSummary
 import app.hikari.core.model.MediaType
 import app.hikari.core.model.ScoreFormat
+import app.hikari.data.AniListLibraryRepository
 import app.hikari.data.local.HikariFavoritesRepository
-import app.hikari.data.remote.AniListLibraryService
 import coil3.compose.AsyncImage
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 import kotlin.math.roundToInt
 
 @HiltViewModel
 class LibraryViewModel @Inject constructor(
-    private val api: AniListLibraryService,
+    private val library: AniListLibraryRepository,
     private val favorites: HikariFavoritesRepository,
 ) : ViewModel() {
     private val _state = MutableStateFlow(LibraryUiState())
     val state: StateFlow<LibraryUiState> = _state.asStateFlow()
+    private var selectedType = MediaType.ANIME
+    private var observationJob: Job? = null
+    private var refreshJob: Job? = null
 
     init {
         viewModelScope.launch {
@@ -83,26 +89,61 @@ class LibraryViewModel @Inject constructor(
         }
     }
 
-    fun load(type: MediaType) = viewModelScope.launch {
+    fun selectType(type: MediaType) {
+        selectedType = type
+        observationJob?.cancel()
+        refreshJob?.cancel()
+        _state.value = _state.value.copy(entries = emptyList(), loading = true, error = null)
+
+        observationJob = viewModelScope.launch {
+            library.observe(type).filterNotNull().collect { snapshot ->
+                if (selectedType == type) {
+                    _state.value = _state.value.copy(
+                        entries = snapshot.entries,
+                        scoreFormat = snapshot.scoreFormat,
+                        loading = false,
+                        error = null,
+                    )
+                }
+            }
+        }
+        refresh(type)
+    }
+
+    fun refresh(type: MediaType = selectedType) {
+        if (type != selectedType) return
+        refreshJob?.cancel()
         _state.value = _state.value.copy(loading = true, error = null)
-        runCatching { api.library(type) }
-            .onSuccess { snapshot ->
-                _state.value = _state.value.copy(entries = snapshot.entries, scoreFormat = snapshot.scoreFormat, loading = false)
+        refreshJob = viewModelScope.launch {
+            try {
+                library.refresh(type)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                if (selectedType == type) {
+                    _state.value = _state.value.copy(
+                        loading = false,
+                        error = error.message ?: "Couldn't load your library.",
+                    )
+                }
             }
-            .onFailure { error ->
-                _state.value = _state.value.copy(loading = false, error = error.message ?: "Couldn't load your library.")
-            }
+        }
     }
 
     fun save(type: MediaType, entry: LibraryEntry, status: String, progress: Int, score: Double, onDone: () -> Unit) = viewModelScope.launch {
         _state.value = _state.value.copy(saving = true, error = null)
-        runCatching { api.updateEntry(entry, status, progress, score) }
-            .onSuccess {
-                _state.value = _state.value.copy(saving = false)
-                load(type)
-                onDone()
-            }
-            .onFailure { error -> _state.value = _state.value.copy(saving = false, error = error.message ?: "Couldn't save your AniList changes.") }
+        try {
+            library.updateEntry(type, entry, status, progress, score)
+            _state.value = _state.value.copy(saving = false)
+            onDone()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Throwable) {
+            _state.value = _state.value.copy(
+                saving = false,
+                error = error.message ?: "Couldn't save your AniList changes.",
+            )
+        }
     }
 
     fun toggleFavorite(media: MediaSummary) = viewModelScope.launch {
@@ -132,7 +173,7 @@ fun LibraryScreen(
     var selected by remember { mutableStateOf<LibraryEntry?>(null) }
     val state by vm.state.collectAsState()
 
-    LaunchedEffect(signedIn, type) { if (signedIn) vm.load(type) }
+    LaunchedEffect(signedIn, type) { if (signedIn) vm.selectType(type) }
 
     if (!signedIn) {
         Column(Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -160,12 +201,12 @@ fun LibraryScreen(
                     Text("Library", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
                     Text("AniList tracking + Hikari favorites", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                IconButton(onClick = { vm.load(type) }, enabled = !state.loading && !state.saving) {
+                IconButton(onClick = { vm.refresh(type) }, enabled = !state.loading && !state.saving) {
                     if (state.loading) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp) else Icon(Icons.Outlined.Refresh, "Refresh library")
                 }
             }
         }
-        item { ChoiceRow(listOf("ANIME", "MANGA"), type.name) { type = MediaType.valueOf(it); status = "ALL" } }
+        item { ChoiceRow(listOf("ANIME", "MANGA"), type.name) { type = MediaType.valueOf(it); status = "ALL"; selected = null } }
         item { ChoiceRow(statuses, status) { status = it } }
         if (status == "FAVORITES") {
             item {
@@ -185,7 +226,7 @@ fun LibraryScreen(
             Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)) {
                 Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text(state.error.orEmpty(), Modifier.weight(1f), color = MaterialTheme.colorScheme.onErrorContainer)
-                    TextButton(onClick = { vm.load(type) }) { Text("Retry") }
+                    TextButton(onClick = { vm.refresh(type) }) { Text("Retry") }
                 }
             }
         }
@@ -322,7 +363,7 @@ private fun ChoiceRow(options: List<String>, selected: String, onSelect: (String
     }
 }
 
-private fun statusOptions(type: MediaType): List<String> = listOf("ALL", "CURRENT", "PLANNING", "COMPLETED", "REPEATING", "PAUSED", "DROPPED")
+private fun statusOptions(type: MediaType): List<String> = listOf("CURRENT", "PLANNING", "COMPLETED", "REPEATING", "PAUSED", "DROPPED")
 private fun optionLabel(value: String): String = when (value) {
     "ALL" -> "All"; "CURRENT" -> "Watching"; "PLANNING" -> "Planning"; "REPEATING" -> "Rewatching"; "REREADING" -> "Rereading"; "COMPLETED" -> "Completed"; "PAUSED" -> "Paused"; "DROPPED" -> "Dropped"; "FAVORITES" -> "♥ Favorites"; else -> value.lowercase().replace('_', ' ').replaceFirstChar { it.uppercase() }
 }

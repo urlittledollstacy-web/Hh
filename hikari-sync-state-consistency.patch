@@ -1,0 +1,1664 @@
+diff --git a/app/build.gradle.kts b/app/build.gradle.kts
+index ab6cf3e8dec79bbd8573b24e5b02e89d0b87c3f3..64984f774eba8e786cc4ccba6de0f4d6c9b960fc 100644
+--- a/app/build.gradle.kts
++++ b/app/build.gradle.kts
+@@ -72,6 +72,7 @@ dependencies {
+     implementation(libs.androidx.security.crypto)
+     implementation(libs.okhttp)
+     implementation(libs.androidx.browser)
++    testImplementation(libs.junit)
+ }
+ 
+ apollo {
+diff --git a/app/src/main/java/app/hikari/MainActivity.kt b/app/src/main/java/app/hikari/MainActivity.kt
+index bbd37d67f554c221226646a34e4f04bca35b9add..9e270295a6d18d348bf3701d1483d247fd700a49 100644
+--- a/app/src/main/java/app/hikari/MainActivity.kt
++++ b/app/src/main/java/app/hikari/MainActivity.kt
+@@ -90,6 +90,7 @@ import app.hikari.core.auth.AuthStartResult
+ import app.hikari.core.auth.SecureTokenStore
+ import app.hikari.core.model.MediaSummary
+ import app.hikari.core.model.MediaType
++import app.hikari.data.AniListLibraryRepository
+ import app.hikari.data.remote.AniListGraphQlService
+ import app.hikari.data.remote.SearchTaxonomy
+ import app.hikari.data.remote.SearchTaxonomyKind
+@@ -100,6 +101,7 @@ import coil3.compose.AsyncImage
+ import dagger.hilt.android.AndroidEntryPoint
+ import dagger.hilt.android.lifecycle.HiltViewModel
+ import kotlinx.coroutines.Dispatchers
++import kotlinx.coroutines.CancellationException
+ import kotlinx.coroutines.Job
+ import kotlinx.coroutines.async
+ import kotlinx.coroutines.coroutineScope
+@@ -116,12 +118,13 @@ import javax.inject.Inject
+ class MainActivity : ComponentActivity() {
+     @Inject lateinit var authManager: AniListAuthManager
+     @Inject lateinit var tokenStore: SecureTokenStore
++    @Inject lateinit var libraryRepository: AniListLibraryRepository
+     private var signedIn by mutableStateOf(false)
+     override fun onCreate(savedInstanceState: Bundle?) { super.onCreate(savedInstanceState); signedIn = tokenStore.accessToken() != null; setContent { HikariApp(signedIn, ::startAniListLogin, ::signOut) }; handleOAuthIntent(intent) }
+     override fun onNewIntent(intent: Intent) { super.onNewIntent(intent); setIntent(intent); handleOAuthIntent(intent) }
+     private fun startAniListLogin() { when (authManager.startLogin(this)) { AuthStartResult.Started -> Unit; AuthStartResult.MissingClientId -> Toast.makeText(this, "AniList login is not configured yet.", Toast.LENGTH_LONG).show() } }
+-    private fun handleOAuthIntent(intent: Intent) { when (val result = authManager.handleCallback(intent)) { AuthCallbackResult.Success -> { signedIn = true; Toast.makeText(this, "Connected to AniList.", Toast.LENGTH_SHORT).show() }; is AuthCallbackResult.Error -> Toast.makeText(this, result.message, Toast.LENGTH_LONG).show(); null -> Unit } }
+-    private fun signOut() { authManager.logout(); signedIn = false; Toast.makeText(this, "Signed out of AniList.", Toast.LENGTH_SHORT).show() }
++    private fun handleOAuthIntent(intent: Intent) { when (val result = authManager.handleCallback(intent)) { AuthCallbackResult.Success -> { libraryRepository.clear(); signedIn = true; Toast.makeText(this, "Connected to AniList.", Toast.LENGTH_SHORT).show() }; is AuthCallbackResult.Error -> Toast.makeText(this, result.message, Toast.LENGTH_LONG).show(); null -> Unit } }
++    private fun signOut() { authManager.logout(); libraryRepository.clear(); signedIn = false; Toast.makeText(this, "Signed out of AniList.", Toast.LENGTH_SHORT).show() }
+ }
+ 
+ private enum class Destination(val label: String, val icon: ImageVector) { Home("Home", Icons.Outlined.Home), Discover("Discover", Icons.Outlined.Search), Library("Library", Icons.Outlined.BookmarkBorder), Calendar("Calendar", Icons.Outlined.CalendarMonth), Profile("Profile", Icons.Outlined.PersonOutline) }
+@@ -132,12 +135,189 @@ private const val HIKARI_AVATAR_PREFS = "hikari_home_avatar"
+ private const val HIKARI_AVATAR_PATH = "path"
+ 
+ data class HomeUiState(val trending: List<MediaSummary> = emptyList(), val airing: List<MediaSummary> = emptyList(), val loading: Boolean = true, val refreshing: Boolean = false, val error: String? = null)
+-@HiltViewModel class HomeViewModel @Inject constructor(private val api: AniListGraphQlService) : ViewModel() { private val _state = MutableStateFlow(HomeUiState()); val state: StateFlow<HomeUiState> = _state.asStateFlow(); init { refresh(); viewModelScope.launch { var trendTick = 0; while (true) { delay(60_000); refreshAiring(); trendTick++; if (trendTick >= 5) { trendTick = 0; refreshTrendingSilently() } } } }; fun refresh() = viewModelScope.launch { _state.value = _state.value.copy(refreshing = true, error = null); val (trending, airing) = coroutineScope { val a = async { runCatching { api.trending(MediaType.ANIME) }.getOrDefault(emptyList()) }; val b = async { runCatching { api.airingSoon() }.getOrDefault(emptyList()) }; a.await() to b.await() }; _state.value = HomeUiState(trending, airing, false, false, if (trending.isEmpty() && airing.isEmpty()) "AniList is unavailable right now. Try again in a moment." else null) }; private fun refreshAiring() = viewModelScope.launch { _state.value = _state.value.copy(airing = runCatching { api.airingSoon() }.getOrDefault(emptyList()), loading = false) }; private fun refreshTrendingSilently() = viewModelScope.launch { _state.value = _state.value.copy(trending = runCatching { api.trending(MediaType.ANIME) }.getOrDefault(emptyList()), loading = false) } }
++@HiltViewModel
++class HomeViewModel @Inject constructor(private val api: AniListGraphQlService) : ViewModel() {
++    private val _state = MutableStateFlow(HomeUiState())
++    val state: StateFlow<HomeUiState> = _state.asStateFlow()
++
++    init {
++        refresh()
++        viewModelScope.launch {
++            var trendTick = 0
++            while (true) {
++                delay(60_000)
++                refreshAiring()
++                trendTick++
++                if (trendTick >= 5) {
++                    trendTick = 0
++                    refreshTrendingSilently()
++                }
++            }
++        }
++    }
++
++    fun refresh() = viewModelScope.launch {
++        _state.value = _state.value.copy(refreshing = true, error = null)
++        val (trending, airing) = coroutineScope {
++            val trendingRequest = async { loadPreservingCancellation { api.trending(MediaType.ANIME) } }
++            val airingRequest = async { loadPreservingCancellation { api.airingSoon() } }
++            trendingRequest.await() to airingRequest.await()
++        }
++        val previous = _state.value
++        _state.value = previous.copy(
++            trending = trending ?: previous.trending,
++            airing = airing ?: previous.airing,
++            loading = false,
++            refreshing = false,
++            error = if (trending == null && airing == null) "AniList is unavailable right now. Try again in a moment." else null,
++        )
++    }
++
++    private fun refreshAiring() = viewModelScope.launch {
++        val airing = loadPreservingCancellation { api.airingSoon() } ?: return@launch
++        _state.value = _state.value.copy(airing = airing, loading = false)
++    }
++
++    private fun refreshTrendingSilently() = viewModelScope.launch {
++        val trending = loadPreservingCancellation { api.trending(MediaType.ANIME) } ?: return@launch
++        _state.value = _state.value.copy(trending = trending, loading = false)
++    }
++
++    private suspend fun <T> loadPreservingCancellation(block: suspend () -> T): T? = try {
++        block()
++    } catch (cancelled: CancellationException) {
++        throw cancelled
++    } catch (_: Throwable) {
++        null
++    }
++}
+ 
+ enum class SearchMediaFilter(val label: String, val type: MediaType?) { ALL("All", null), ANIME("Anime", MediaType.ANIME), MANGA("Manga", MediaType.MANGA) }
+ enum class SearchMode { MEDIA, TAGS_GENRES }
+-data class SearchUiState(val query: String = "", val results: List<MediaSummary> = emptyList(), val taxonomyResults: List<SearchTaxonomy> = emptyList(), val searching: Boolean = false, val loadingMore: Boolean = false, val page: Int = 1, val hasMore: Boolean = false, val filter: SearchMediaFilter = SearchMediaFilter.ALL, val mode: SearchMode = SearchMode.MEDIA, val taxonomy: SearchTaxonomy? = null)
+-@HiltViewModel class SearchViewModel @Inject constructor(private val api: AniListGraphQlService) : ViewModel() { private val _state = MutableStateFlow(SearchUiState()); val state: StateFlow<SearchUiState> = _state.asStateFlow(); private var searchJob: Job? = null; fun toggleMode() { val next = if (_state.value.mode == SearchMode.MEDIA) SearchMode.TAGS_GENRES else SearchMode.MEDIA; _state.value = _state.value.copy(mode = next, query = "", results = emptyList(), taxonomyResults = emptyList(), page = 1, hasMore = false, taxonomy = null); searchJob?.cancel() }; fun setQuery(value: String) { val normalized = value.take(80); _state.value = _state.value.copy(query = normalized, results = emptyList(), taxonomyResults = emptyList(), page = 1, hasMore = false, taxonomy = null); searchJob?.cancel(); if (normalized.trim().isBlank()) return; searchJob = viewModelScope.launch { delay(if (_state.value.mode == SearchMode.MEDIA) 350 else 180); searchFirstPage() } }; fun setFilter(filter: SearchMediaFilter) { if (_state.value.filter == filter) return; _state.value = _state.value.copy(filter = filter, results = emptyList(), page = 1, hasMore = false, taxonomy = null); if (_state.value.mode == SearchMode.MEDIA && _state.value.query.trim().isNotBlank()) { searchJob?.cancel(); searchJob = viewModelScope.launch { delay(180); searchFirstPage() } } }; fun selectTaxonomy(item: SearchTaxonomy) { _state.value = _state.value.copy(mode = SearchMode.MEDIA, query = item.name, taxonomy = item, taxonomyResults = emptyList(), results = emptyList(), page = 1, hasMore = false); searchJob?.cancel(); searchJob = viewModelScope.launch { searchFirstPage() } }; fun loadMore() { val current = _state.value; if (current.loadingMore || current.searching || !current.hasMore || current.query.trim().isBlank()) return; viewModelScope.launch { val page = current.page + 1; _state.value = _state.value.copy(loadingMore = true); val next = runCatching { current.taxonomy?.let { api.searchByTaxonomy(it, current.filter.type, page) } ?: api.search(current.query.trim(), current.filter.type, page) }.getOrDefault(emptyList()); _state.value = _state.value.copy(results = (_state.value.results + next).distinctBy { it.id to it.type }, page = page, hasMore = next.size >= 20, loadingMore = false) } }; private suspend fun searchFirstPage() { val current = _state.value; val query = current.query.trim(); if (query.isBlank()) return; _state.value = _state.value.copy(searching = true, loadingMore = false, page = 1, hasMore = false); if (current.mode == SearchMode.TAGS_GENRES) { val matches = runCatching { api.searchTaxonomies(query) }.getOrDefault(emptyList()); if (_state.value.query.trim() != query || _state.value.mode != SearchMode.TAGS_GENRES) return; _state.value = _state.value.copy(taxonomyResults = matches, searching = false); return }; val results = runCatching { current.taxonomy?.let { api.searchByTaxonomy(it, current.filter.type, 1) } ?: api.search(query, current.filter.type, 1) }.getOrDefault(emptyList()); if (_state.value.query.trim() != query || _state.value.mode != SearchMode.MEDIA) return; _state.value = _state.value.copy(results = results, searching = false, page = 1, hasMore = results.size >= 20) }; override fun onCleared() { searchJob?.cancel(); super.onCleared() } }
++data class SearchUiState(val query: String = "", val results: List<MediaSummary> = emptyList(), val taxonomyResults: List<SearchTaxonomy> = emptyList(), val searching: Boolean = false, val loadingMore: Boolean = false, val page: Int = 1, val hasMore: Boolean = false, val filter: SearchMediaFilter = SearchMediaFilter.ALL, val mode: SearchMode = SearchMode.MEDIA, val taxonomy: SearchTaxonomy? = null, val error: String? = null)
++
++private data class SearchRequestKey(
++    val query: String,
++    val filter: SearchMediaFilter,
++    val mode: SearchMode,
++    val taxonomy: SearchTaxonomy?,
++)
++
++@HiltViewModel
++class SearchViewModel @Inject constructor(private val api: AniListGraphQlService) : ViewModel() {
++    private val _state = MutableStateFlow(SearchUiState())
++    val state: StateFlow<SearchUiState> = _state.asStateFlow()
++    private var searchJob: Job? = null
++    private var loadMoreJob: Job? = null
++    private var generation = 0L
++
++    fun toggleMode() {
++        invalidateRequests()
++        val next = if (_state.value.mode == SearchMode.MEDIA) SearchMode.TAGS_GENRES else SearchMode.MEDIA
++        _state.value = _state.value.copy(mode = next, query = "", results = emptyList(), taxonomyResults = emptyList(), searching = false, loadingMore = false, page = 1, hasMore = false, taxonomy = null, error = null)
++    }
++
++    fun setQuery(value: String) {
++        invalidateRequests()
++        val normalized = value.take(80)
++        _state.value = _state.value.copy(query = normalized, results = emptyList(), taxonomyResults = emptyList(), searching = false, loadingMore = false, page = 1, hasMore = false, taxonomy = null, error = null)
++        if (normalized.trim().isBlank()) return
++        launchFirstPage(if (_state.value.mode == SearchMode.MEDIA) 350 else 180)
++    }
++
++    fun setFilter(filter: SearchMediaFilter) {
++        if (_state.value.filter == filter) return
++        invalidateRequests()
++        _state.value = _state.value.copy(filter = filter, results = emptyList(), searching = false, loadingMore = false, page = 1, hasMore = false, taxonomy = null, error = null)
++        if (_state.value.mode == SearchMode.MEDIA && _state.value.query.trim().isNotBlank()) launchFirstPage(180)
++    }
++
++    fun selectTaxonomy(item: SearchTaxonomy) {
++        invalidateRequests()
++        _state.value = _state.value.copy(mode = SearchMode.MEDIA, query = item.name, taxonomy = item, taxonomyResults = emptyList(), results = emptyList(), searching = false, loadingMore = false, page = 1, hasMore = false, error = null)
++        launchFirstPage(0)
++    }
++
++    fun loadMore() {
++        val current = _state.value
++        if (current.loadingMore || current.searching || !current.hasMore || current.query.trim().isBlank()) return
++        val key = requestKey(current)
++        val requestGeneration = generation
++        val page = current.page + 1
++        _state.value = current.copy(loadingMore = true, error = null)
++        loadMoreJob?.cancel()
++        loadMoreJob = viewModelScope.launch {
++            try {
++                val next = search(key, page)
++                if (!isCurrent(key, requestGeneration)) return@launch
++                _state.value = _state.value.copy(
++                    results = (_state.value.results + next).distinctBy { it.id to it.type },
++                    page = page,
++                    hasMore = next.size >= 20,
++                    loadingMore = false,
++                )
++            } catch (cancelled: CancellationException) {
++                throw cancelled
++            } catch (_: Throwable) {
++                if (isCurrent(key, requestGeneration)) {
++                    _state.value = _state.value.copy(loadingMore = false, error = "Couldn't load more AniList results.")
++                }
++            }
++        }
++    }
++
++    private fun launchFirstPage(delayMillis: Long) {
++        val key = requestKey(_state.value)
++        val requestGeneration = generation
++        searchJob = viewModelScope.launch {
++            delay(delayMillis)
++            if (!isCurrent(key, requestGeneration)) return@launch
++            _state.value = _state.value.copy(searching = true, loadingMore = false, page = 1, hasMore = false, error = null)
++            try {
++                if (key.mode == SearchMode.TAGS_GENRES) {
++                    val matches = api.searchTaxonomies(key.query)
++                    if (!isCurrent(key, requestGeneration)) return@launch
++                    _state.value = _state.value.copy(taxonomyResults = matches, searching = false)
++                } else {
++                    val results = search(key, 1)
++                    if (!isCurrent(key, requestGeneration)) return@launch
++                    _state.value = _state.value.copy(results = results, searching = false, page = 1, hasMore = results.size >= 20)
++                }
++            } catch (cancelled: CancellationException) {
++                throw cancelled
++            } catch (_: Throwable) {
++                if (isCurrent(key, requestGeneration)) {
++                    _state.value = _state.value.copy(searching = false, error = "Couldn't search AniList. Try again.")
++                }
++            }
++        }
++    }
++
++    private suspend fun search(key: SearchRequestKey, page: Int): List<MediaSummary> =
++        key.taxonomy?.let { api.searchByTaxonomy(it, key.filter.type, page) }
++            ?: api.search(key.query, key.filter.type, page)
++
++    private fun requestKey(state: SearchUiState) = SearchRequestKey(
++        query = state.query.trim(),
++        filter = state.filter,
++        mode = state.mode,
++        taxonomy = state.taxonomy,
++    )
++
++    private fun isCurrent(key: SearchRequestKey, requestGeneration: Long): Boolean =
++        generation == requestGeneration && requestKey(_state.value) == key
++
++    private fun invalidateRequests() {
++        generation++
++        searchJob?.cancel()
++        loadMoreJob?.cancel()
++    }
++
++    override fun onCleared() {
++        invalidateRequests()
++        super.onCleared()
++    }
++}
+ 
+ @Composable private fun HikariApp(signedIn: Boolean, onSignIn: () -> Unit, onSignOut: () -> Unit) {
+     var destination by remember { mutableStateOf(Destination.Home) }
+@@ -222,11 +402,11 @@ data class SearchUiState(val query: String = "", val results: List<MediaSummary>
+     }
+ }
+ 
+-@Composable private fun AppContent(destination: Destination, theme: AppTheme, palette: AppPalette, navStyle: NavigationStyle, signedIn: Boolean, onSignIn: () -> Unit, onSignOut: () -> Unit, onTheme: (AppTheme) -> Unit, onPalette: (AppPalette) -> Unit, onNavStyle: (NavigationStyle) -> Unit, padding: PaddingValues, onDestination: (Destination) -> Unit, onMediaClick: (MediaSummary) -> Unit, onTrending: () -> Unit) { when (destination) { Destination.Home -> HomeScreen(padding, { onDestination(Destination.Discover) }, { onDestination(Destination.Calendar) }, onTrending, onMediaClick); Destination.Discover -> DiscoverScreen(padding, onMediaClick); Destination.Library -> LibraryScreen(signedIn, padding); Destination.Calendar -> CalendarScreen(padding, onMediaClick, signedIn); Destination.Profile -> ProfileScreen(theme, palette, navStyle, signedIn, onSignIn, onSignOut, onTheme, onPalette, onNavStyle, padding) } }
++@Composable private fun AppContent(destination: Destination, theme: AppTheme, palette: AppPalette, navStyle: NavigationStyle, signedIn: Boolean, onSignIn: () -> Unit, onSignOut: () -> Unit, onTheme: (AppTheme) -> Unit, onPalette: (AppPalette) -> Unit, onNavStyle: (NavigationStyle) -> Unit, padding: PaddingValues, onDestination: (Destination) -> Unit, onMediaClick: (MediaSummary) -> Unit, onTrending: () -> Unit) { when (destination) { Destination.Home -> HomeScreen(padding, { onDestination(Destination.Discover) }, { onDestination(Destination.Calendar) }, onTrending, onMediaClick); Destination.Discover -> DiscoverScreen(padding, onMediaClick); Destination.Library -> LibraryScreen(signedIn, padding, onMediaClick); Destination.Calendar -> CalendarScreen(padding, onMediaClick, signedIn); Destination.Profile -> ProfileScreen(theme, palette, navStyle, signedIn, onSignIn, onSignOut, onTheme, onPalette, onNavStyle, padding) } }
+ 
+ @Composable private fun HomeScreen(padding: PaddingValues, onSearch: () -> Unit, onCalendar: () -> Unit, onTrending: () -> Unit, onMediaClick: (MediaSummary) -> Unit, vm: HomeViewModel = hiltViewModel()) { val state by vm.state.collectAsState(); val context = LocalContext.current; val scope = rememberCoroutineScope(); var localAvatarPath by remember { mutableStateOf(loadHomeAvatarPath(context)) }; val picker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri -> if (uri != null) scope.launch { val savedPath = withContext(Dispatchers.IO) { saveHomeAvatar(context, uri, localAvatarPath) }; if (savedPath != null) localAvatarPath = savedPath } }; val avatarModel = localAvatarPath?.let(::File); LazyColumn(contentPadding = PaddingValues(20.dp, 26.dp, 20.dp, padding.calculateBottomPadding() + 20.dp), verticalArrangement = Arrangement.spacedBy(22.dp)) { item { Row(verticalAlignment = Alignment.CenterVertically) { Column(Modifier.weight(1f)) { Text("Good evening", color = MaterialTheme.colorScheme.onSurfaceVariant); Text("Find your next favorite.", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold) }; Box(Modifier.size(44.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primary).clickable { picker.launch("image/*") }, contentAlignment = Alignment.Center) { if (avatarModel != null) AsyncImage(model = avatarModel, contentDescription = "Change Hikari profile picture", modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop) else Text("H", color = MaterialTheme.colorScheme.onPrimary, fontWeight = FontWeight.Bold) } } }; item { Row(Modifier.fillMaxWidth().height(58.dp).clip(RoundedCornerShape(18.dp)).background(MaterialTheme.colorScheme.surfaceVariant).clickable(onClick = onSearch).padding(horizontal = 15.dp), verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Outlined.Search, "Search", tint = MaterialTheme.colorScheme.onSurfaceVariant); Spacer(Modifier.width(10.dp)); Text("Search anime, manga, people...", color = MaterialTheme.colorScheme.onSurfaceVariant) } }; if (state.error != null) item { Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)) { Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) { Text(state.error.orEmpty(), Modifier.weight(1f), color = MaterialTheme.colorScheme.onErrorContainer); TextButton(onClick = vm::refresh) { Text("Retry") } } } }; item { Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) { Text("Airing soon", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f)); TextButton(onClick = onCalendar) { Text("See all") } } }; item { if (state.loading) LoadingRow() else if (state.airing.isEmpty()) EmptyMessage("No upcoming episodes found.") else MediaRow(state.airing, true, onMediaClick) }; item { Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) { Text("Trending now", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f)); TextButton(onClick = onTrending) { Text("See all") } } }; item { if (state.loading) LoadingRow() else if (state.trending.isEmpty()) EmptyMessage("No trending anime found.") else MediaRow(state.trending, false, onMediaClick) } } }
+ 
+-@Composable private fun DiscoverScreen(padding: PaddingValues, onMediaClick: (MediaSummary) -> Unit, vm: SearchViewModel = hiltViewModel()) { val state by vm.state.collectAsState(); LazyColumn(contentPadding = PaddingValues(20.dp, 28.dp, 20.dp, padding.calculateBottomPadding() + 24.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) { item { Text("Discover", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold); Text(if (state.mode == SearchMode.MEDIA) "Search AniList instantly" else "Browse AniList tags and genres", color = MaterialTheme.colorScheme.onSurfaceVariant) }; item { OutlinedTextField(value = state.query, onValueChange = vm::setQuery, modifier = Modifier.fillMaxWidth(), singleLine = true, placeholder = { Text(if (state.mode == SearchMode.MEDIA) "Search anime, manga..." else "Search tags or genres...") }, leadingIcon = { Icon(Icons.Outlined.Search, "Search") }, trailingIcon = { Row(verticalAlignment = Alignment.CenterVertically) { if (state.query.isNotBlank()) TextButton(onClick = { vm.setQuery("") }) { Text("Clear") }; IconButton(onClick = vm::toggleMode) { PixelSearchModeIcon(state.mode == SearchMode.TAGS_GENRES) } } }) }; if (state.mode == SearchMode.MEDIA) item { Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) { SearchMediaFilter.entries.forEach { filter -> val active = filter == state.filter; Box(Modifier.clip(CircleShape).background(if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant).clickable { vm.setFilter(filter) }.padding(horizontal = 16.dp, vertical = 10.dp)) { Text(filter.label, color = if (active) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface, fontSize = 12.sp, fontWeight = if (active) FontWeight.Bold else FontWeight.Normal) } } } }; if (state.searching) item { Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) { CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp) } }; if (state.query.isBlank()) item { EmptyMessage(if (state.mode == SearchMode.MEDIA) "Start typing — Hikari will show suggestions automatically." else "Search for a genre or tag, then tap it to browse matching media.") } else if (!state.searching && state.mode == SearchMode.TAGS_GENRES && state.taxonomyResults.isEmpty()) item { EmptyMessage("No tags or genres found for \"${state.query.trim()}\".") } else if (!state.searching && state.mode == SearchMode.MEDIA && state.results.isEmpty()) item { EmptyMessage("No results found for \"${state.query.trim()}\".") } else if (state.mode == SearchMode.TAGS_GENRES && state.taxonomyResults.isNotEmpty()) { item { Text("Tags & genres", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }; items(state.taxonomyResults, key = { "${it.kind}:${it.id}" }) { item -> Card(Modifier.fillMaxWidth().clickable { vm.selectTaxonomy(item) }, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) { Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) { Column(Modifier.weight(1f)) { Text(item.name, fontWeight = FontWeight.SemiBold); Text(if (item.kind == SearchTaxonomyKind.GENRE) "Genre" else "Tag", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp) }; Text("›", fontSize = 22.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) } } } } else if (state.results.isNotEmpty()) { item { Text(if (state.taxonomy != null) "${state.taxonomy!!.name} results" else if (state.query.trim().length == 1) "Suggestions" else "Results", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }; item { SearchResults(state.results, onMediaClick) }; if (state.hasMore) item { Button(onClick = vm::loadMore, enabled = !state.loadingMore, modifier = Modifier.fillMaxWidth()) { if (state.loadingMore) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp) else Text("Load more") } } } } }
++@Composable private fun DiscoverScreen(padding: PaddingValues, onMediaClick: (MediaSummary) -> Unit, vm: SearchViewModel = hiltViewModel()) { val state by vm.state.collectAsState(); LazyColumn(contentPadding = PaddingValues(20.dp, 28.dp, 20.dp, padding.calculateBottomPadding() + 24.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) { item { Text("Discover", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold); Text(if (state.mode == SearchMode.MEDIA) "Search AniList instantly" else "Browse AniList tags and genres", color = MaterialTheme.colorScheme.onSurfaceVariant) }; item { OutlinedTextField(value = state.query, onValueChange = vm::setQuery, modifier = Modifier.fillMaxWidth(), singleLine = true, placeholder = { Text(if (state.mode == SearchMode.MEDIA) "Search anime, manga..." else "Search tags or genres...") }, leadingIcon = { Icon(Icons.Outlined.Search, "Search") }, trailingIcon = { Row(verticalAlignment = Alignment.CenterVertically) { if (state.query.isNotBlank()) TextButton(onClick = { vm.setQuery("") }) { Text("Clear") }; IconButton(onClick = vm::toggleMode) { PixelSearchModeIcon(state.mode == SearchMode.TAGS_GENRES) } } }) }; if (state.mode == SearchMode.MEDIA) item { Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) { SearchMediaFilter.entries.forEach { filter -> val active = filter == state.filter; Box(Modifier.clip(CircleShape).background(if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant).clickable { vm.setFilter(filter) }.padding(horizontal = 16.dp, vertical = 10.dp)) { Text(filter.label, color = if (active) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface, fontSize = 12.sp, fontWeight = if (active) FontWeight.Bold else FontWeight.Normal) } } } }; if (state.searching) item { Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) { CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp) } }; state.error?.let { message -> item { Text(message, color = MaterialTheme.colorScheme.error) } }; if (state.query.isBlank()) item { EmptyMessage(if (state.mode == SearchMode.MEDIA) "Start typing — Hikari will show suggestions automatically." else "Search for a genre or tag, then tap it to browse matching media.") } else if (state.error == null && !state.searching && state.mode == SearchMode.TAGS_GENRES && state.taxonomyResults.isEmpty()) item { EmptyMessage("No tags or genres found for \"${state.query.trim()}\".") } else if (state.error == null && !state.searching && state.mode == SearchMode.MEDIA && state.results.isEmpty()) item { EmptyMessage("No results found for \"${state.query.trim()}\".") } else if (state.mode == SearchMode.TAGS_GENRES && state.taxonomyResults.isNotEmpty()) { item { Text("Tags & genres", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }; items(state.taxonomyResults, key = { "${it.kind}:${it.id}" }) { item -> Card(Modifier.fillMaxWidth().clickable { vm.selectTaxonomy(item) }, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) { Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) { Column(Modifier.weight(1f)) { Text(item.name, fontWeight = FontWeight.SemiBold); Text(if (item.kind == SearchTaxonomyKind.GENRE) "Genre" else "Tag", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp) }; Text("›", fontSize = 22.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) } } } } else if (state.results.isNotEmpty()) { item { Text(if (state.taxonomy != null) "${state.taxonomy!!.name} results" else if (state.query.trim().length == 1) "Suggestions" else "Results", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }; item { SearchResults(state.results, onMediaClick) }; if (state.hasMore) item { Button(onClick = vm::loadMore, enabled = !state.loadingMore, modifier = Modifier.fillMaxWidth()) { if (state.loadingMore) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp) else Text("Load more") } } } } }
+ @Composable private fun PixelSearchModeIcon(active: Boolean) { val on = MaterialTheme.colorScheme.primary; val off = MaterialTheme.colorScheme.onSurfaceVariant; Column(verticalArrangement = Arrangement.spacedBy(2.dp)) { repeat(3) { row -> Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) { repeat(3) { col -> Box(Modifier.size(4.dp).background(if ((row + col) % 2 == 0) on else off)) } } } } }
+ @Composable private fun SearchResults(media: List<MediaSummary>, onMediaClick: (MediaSummary) -> Unit) { Column(verticalArrangement = Arrangement.spacedBy(10.dp)) { media.forEach { item -> Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(MaterialTheme.colorScheme.surfaceVariant).clickable { onMediaClick(item) }.padding(10.dp), verticalAlignment = Alignment.CenterVertically) { Box(Modifier.size(58.dp).clip(RoundedCornerShape(10.dp)).background(MaterialTheme.colorScheme.surface)) { item.coverUrl?.let { AsyncImage(model = it, contentDescription = item.title, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop) } }; Spacer(Modifier.width(12.dp)); Column(Modifier.weight(1f)) { Text(item.title, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis); Text(buildString { append(if (item.type == MediaType.ANIME) "Anime" else "Manga"); item.averageScore?.let { append("  •  ★ $it%") }; item.episodesOrChapters?.let { append("  •  ${if (item.type == MediaType.ANIME) "$it eps" else "$it ch"}") } }, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) } } } } }
+ @Composable private fun LoadingRow() { Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) { repeat(3) { Box(Modifier.width(126.dp).aspectRatio(.7f).clip(RoundedCornerShape(18.dp)).background(MaterialTheme.colorScheme.surfaceVariant)) } } }
+diff --git a/app/src/main/java/app/hikari/TrendingScreen.kt b/app/src/main/java/app/hikari/TrendingScreen.kt
+index b2cf460a402539cb782ae1b036887fd965b26973..ff53a9712f4ae54431617248ee66c0d4bc54f016 100644
+--- a/app/src/main/java/app/hikari/TrendingScreen.kt
++++ b/app/src/main/java/app/hikari/TrendingScreen.kt
+@@ -45,6 +45,7 @@ import app.hikari.core.model.MediaType
+ import app.hikari.data.remote.AniListGraphQlService
+ import coil3.compose.AsyncImage
+ import dagger.hilt.android.lifecycle.HiltViewModel
++import kotlinx.coroutines.CancellationException
+ import kotlinx.coroutines.flow.MutableStateFlow
+ import kotlinx.coroutines.flow.StateFlow
+ import kotlinx.coroutines.flow.asStateFlow
+@@ -57,6 +58,7 @@ data class TrendingUiState(
+     val loading: Boolean = true,
+     val loadingMore: Boolean = false,
+     val hasMore: Boolean = true,
++    val error: String? = null,
+ )
+ 
+ @HiltViewModel
+@@ -76,16 +78,26 @@ class TrendingViewModel @Inject constructor(
+         if (current.loadingMore || !current.hasMore) return
+         viewModelScope.launch {
+             val nextPage = page + 1
+-            _state.value = current.copy(loadingMore = true)
+-            val next = api.trending(MediaType.ANIME, nextPage)
+-            page = nextPage
+-            val merged = (_state.value.items + next).distinctBy { it.id to it.type }
+-            _state.value = TrendingUiState(
+-                items = merged,
+-                loading = false,
+-                loadingMore = false,
+-                hasMore = next.size >= 20,
+-            )
++            _state.value = current.copy(loadingMore = true, error = null)
++            try {
++                val next = api.trending(MediaType.ANIME, nextPage)
++                page = nextPage
++                val merged = (_state.value.items + next).distinctBy { it.id to it.type }
++                _state.value = TrendingUiState(
++                    items = merged,
++                    loading = false,
++                    loadingMore = false,
++                    hasMore = next.size >= 20,
++                )
++            } catch (cancelled: CancellationException) {
++                throw cancelled
++            } catch (_: Throwable) {
++                _state.value = current.copy(
++                    loading = false,
++                    loadingMore = false,
++                    error = "Couldn't load trending anime. Try again.",
++                )
++            }
+         }
+     }
+ }
+@@ -130,7 +142,7 @@ fun TrendingScreen(
+             }
+         } else if (state.items.isEmpty()) {
+             Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
+-                Text("No trending anime found.", color = MaterialTheme.colorScheme.onSurfaceVariant)
++                Text(state.error ?: "No trending anime found.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+             }
+         } else {
+             LazyVerticalGrid(
+diff --git a/app/src/main/java/app/hikari/calendar/CalendarScreen.kt b/app/src/main/java/app/hikari/calendar/CalendarScreen.kt
+index 5cc35d9304eed32d395351773f9791aab13e54c3..93d0bd6a31439948a555ce27c705c2ec9398178f 100644
+--- a/app/src/main/java/app/hikari/calendar/CalendarScreen.kt
++++ b/app/src/main/java/app/hikari/calendar/CalendarScreen.kt
+@@ -49,14 +49,18 @@ import androidx.lifecycle.ViewModel
+ import androidx.lifecycle.viewModelScope
+ import app.hikari.core.model.AiringScheduleEntry
+ import app.hikari.core.model.MediaSummary
++import app.hikari.core.model.MediaType
++import app.hikari.data.AniListLibraryRepository
+ import app.hikari.data.remote.AniListCalendarService
+-import app.hikari.data.remote.AniListLibraryService
+ import coil3.compose.AsyncImage
+ import dagger.hilt.android.lifecycle.HiltViewModel
+ import kotlinx.coroutines.delay
++import kotlinx.coroutines.CancellationException
++import kotlinx.coroutines.Job
+ import kotlinx.coroutines.flow.MutableStateFlow
+ import kotlinx.coroutines.flow.StateFlow
+ import kotlinx.coroutines.flow.asStateFlow
++import kotlinx.coroutines.flow.filterNotNull
+ import kotlinx.coroutines.launch
+ import java.text.SimpleDateFormat
+ import java.util.Calendar
+@@ -79,15 +83,30 @@ data class CalendarUiState(
+ @HiltViewModel
+ class CalendarViewModel @Inject constructor(
+     private val calendarApi: AniListCalendarService,
+-    private val libraryApi: AniListLibraryService,
++    private val library: AniListLibraryRepository,
+ ) : ViewModel() {
+     private val _state = MutableStateFlow(CalendarUiState())
+     val state: StateFlow<CalendarUiState> = _state.asStateFlow()
+     private var libraryIds: Set<Int> = emptySet()
+-    private var libraryLoaded = false
+     private var allEntries: List<AiringScheduleEntry> = emptyList()
++    private var refreshJob: Job? = null
++    private var libraryRefreshJob: Job? = null
+ 
+-    init { refresh() }
++    init {
++        viewModelScope.launch {
++            library.observe(MediaType.ANIME).filterNotNull().collect { snapshot ->
++                libraryIds = snapshot.entries
++                    .filter { it.status == "CURRENT" }
++                    .mapTo(mutableSetOf()) { it.media.id }
++                val current = _state.value
++                _state.value = current.copy(
++                    entries = entriesFor(current.selectedDay, current.showMine),
++                    myEntries = allEntries.filter { it.mediaId in libraryIds },
++                )
++            }
++        }
++        refresh()
++    }
+ 
+     fun selectDay(index: Int) {
+         val current = _state.value
+@@ -97,50 +116,60 @@ class CalendarViewModel @Inject constructor(
+ 
+     fun setShowMine(value: Boolean) {
+         val current = _state.value
+-        if (!value) {
+-            _state.value = current.copy(showMine = false, entries = entriesFor(current.selectedDay, false))
+-            return
+-        }
+-        if (libraryLoaded) {
+-            _state.value = current.copy(showMine = true, entries = entriesFor(current.selectedDay, true))
+-            return
+-        }
+-        _state.value = current.copy(showMine = true, loading = true, error = null)
+-        viewModelScope.launch {
+-            loadLibrary()
+-            val latest = _state.value
+-            _state.value = latest.copy(
+-                showMine = true,
+-                loading = false,
+-                entries = entriesFor(latest.selectedDay, true),
+-            )
+-        }
++        _state.value = current.copy(
++            showMine = value,
++            entries = entriesFor(current.selectedDay, value),
++            error = null,
++        )
++        if (value) refreshLibrary()
+     }
+ 
+-    fun refresh() = viewModelScope.launch {
++    fun refresh() {
++        refreshJob?.cancel()
+         _state.value = _state.value.copy(loading = true, error = null)
+-        val days = buildDays()
+-        val start = days.firstOrNull()?.start ?: dayStart(System.currentTimeMillis())
+-        val end = (days.lastOrNull()?.start ?: start) + DAY_SECONDS
+-        val result = runCatching { calendarApi.airingSchedule(start, end) }
+-        val wantsMine = _state.value.showMine
+-        if (wantsMine) loadLibrary()
+-        allEntries = result.getOrDefault(emptyList()).distinctBy { it.id }.sortedBy { it.airingAt }
+-        _state.value = CalendarUiState(
+-            days = days,
+-            selectedDay = 0,
+-            entries = entriesFor(days, 0, wantsMine),
+-            myEntries = allEntries.filter { it.mediaId in libraryIds },
+-            showMine = wantsMine,
+-            loading = false,
+-            error = result.exceptionOrNull()?.message?.takeIf { allEntries.isEmpty() },
+-        )
++        refreshJob = viewModelScope.launch {
++            val days = buildDays()
++            val start = days.firstOrNull()?.start ?: dayStart(System.currentTimeMillis())
++            val end = (days.lastOrNull()?.start ?: start) + DAY_SECONDS
++            try {
++                val result = calendarApi.airingSchedule(start, end)
++                allEntries = result.distinctBy { it.id }.sortedBy { it.airingAt }
++                val wantsMine = _state.value.showMine
++                _state.value = CalendarUiState(
++                    days = days,
++                    selectedDay = 0,
++                    entries = entriesFor(days, 0, wantsMine),
++                    myEntries = allEntries.filter { it.mediaId in libraryIds },
++                    showMine = wantsMine,
++                    loading = false,
++                )
++                if (wantsMine) refreshLibrary()
++            } catch (cancelled: CancellationException) {
++                throw cancelled
++            } catch (error: Throwable) {
++                _state.value = _state.value.copy(
++                    loading = false,
++                    error = error.message ?: "Couldn't load the airing calendar.",
++                )
++            }
++        }
+     }
+ 
+-    private suspend fun loadLibrary() {
+-        val library = runCatching { libraryApi.library(app.hikari.core.model.MediaType.ANIME) }.getOrNull()
+-        libraryIds = library?.entries.orEmpty().filter { it.status == "CURRENT" }.map { it.media.id }.toSet()
+-        libraryLoaded = library != null
++    private fun refreshLibrary() {
++        libraryRefreshJob?.cancel()
++        libraryRefreshJob = viewModelScope.launch {
++            try {
++                library.refresh(MediaType.ANIME)
++            } catch (cancelled: CancellationException) {
++                throw cancelled
++            } catch (error: Throwable) {
++                if (_state.value.showMine) {
++                    _state.value = _state.value.copy(
++                        error = error.message ?: "Couldn't refresh your AniList library.",
++                    )
++                }
++            }
++        }
+     }
+ 
+     private fun entriesFor(index: Int, showMine: Boolean): List<AiringScheduleEntry> {
+diff --git a/app/src/main/java/app/hikari/data/AniListLibraryRepository.kt b/app/src/main/java/app/hikari/data/AniListLibraryRepository.kt
+new file mode 100644
+index 0000000000000000000000000000000000000000..86e54ee43b144f8f7fe4e9ede1f97d3e49a1e6f1
+--- /dev/null
++++ b/app/src/main/java/app/hikari/data/AniListLibraryRepository.kt
+@@ -0,0 +1,111 @@
++package app.hikari.data
++
++import app.hikari.core.model.LibraryEntry
++import app.hikari.core.model.MediaType
++import app.hikari.data.remote.AniListLibraryRemote
++import app.hikari.data.remote.LibrarySnapshot
++import java.util.concurrent.atomic.AtomicLong
++import javax.inject.Inject
++import javax.inject.Singleton
++import kotlinx.coroutines.flow.Flow
++import kotlinx.coroutines.flow.MutableSharedFlow
++import kotlinx.coroutines.flow.MutableStateFlow
++import kotlinx.coroutines.flow.SharedFlow
++import kotlinx.coroutines.flow.StateFlow
++import kotlinx.coroutines.flow.asSharedFlow
++import kotlinx.coroutines.flow.asStateFlow
++import kotlinx.coroutines.flow.distinctUntilChanged
++import kotlinx.coroutines.flow.map
++import kotlinx.coroutines.flow.update
++import kotlinx.coroutines.CancellationException
++import kotlinx.coroutines.sync.Mutex
++import kotlinx.coroutines.sync.withLock
++
++/**
++ * Process-wide source of truth for the signed-in user's AniList tracking data.
++ *
++ * Anime and manga are stored and serialized independently. A successful mutation
++ * is followed by a server refresh while holding the same per-type lock, so every
++ * observer receives the canonical server state in one publication.
++ */
++@Singleton
++class AniListLibraryRepository @Inject constructor(
++    private val remote: AniListLibraryRemote,
++) {
++    private val snapshots = MutableStateFlow<Map<MediaType, LibrarySnapshot>>(emptyMap())
++    private val locks = MediaType.entries.associateWith { Mutex() }
++    private val accountGeneration = AtomicLong(0L)
++    private val _changes = MutableSharedFlow<MediaType>(extraBufferCapacity = MediaType.entries.size)
++    private val _sessionVersion = MutableStateFlow(0L)
++
++    val state: StateFlow<Map<MediaType, LibrarySnapshot>> = snapshots.asStateFlow()
++    val changes: SharedFlow<MediaType> = _changes.asSharedFlow()
++    val sessionVersion: StateFlow<Long> = _sessionVersion.asStateFlow()
++
++    fun observe(type: MediaType): Flow<LibrarySnapshot?> =
++        state.map { it[type] }.distinctUntilChanged()
++
++    suspend fun refresh(type: MediaType): LibrarySnapshot = locks.getValue(type).withLock {
++        val generation = accountGeneration.get()
++        val snapshot = remote.library(type)
++        publishIfCurrent(type, snapshot, generation)
++        snapshot
++    }
++
++    suspend fun updateEntry(
++        type: MediaType,
++        entry: LibraryEntry,
++        status: String,
++        progress: Int,
++        score: Double,
++    ): LibrarySnapshot = locks.getValue(type).withLock {
++        require(entry.media.type == type) { "Library entry type does not match the selected library." }
++        val generation = accountGeneration.get()
++        val savedEntry = remote.updateEntry(entry, status, progress, score)
++        val current = snapshots.value[type]
++        var snapshot = mergeSavedEntry(current, savedEntry)
++        if (publishIfCurrent(type, snapshot, generation)) {
++            _changes.emit(type)
++        }
++
++        snapshot = try {
++            remote.library(type)
++        } catch (cancelled: CancellationException) {
++            throw cancelled
++        } catch (_: Throwable) {
++            return@withLock snapshot
++        }
++        publishIfCurrent(type, snapshot, generation)
++        snapshot
++    }
++
++    /** Prevent data from a previous account being shown after sign-out/sign-in. */
++    fun clear() {
++        accountGeneration.incrementAndGet()
++        snapshots.value = emptyMap()
++        _sessionVersion.value += 1
++    }
++
++    private fun publishIfCurrent(
++        type: MediaType,
++        snapshot: LibrarySnapshot,
++        generation: Long,
++    ): Boolean {
++        if (accountGeneration.get() != generation) return false
++        snapshots.update { current -> current + (type to snapshot) }
++        return true
++    }
++
++    private fun mergeSavedEntry(
++        current: LibrarySnapshot?,
++        saved: LibraryEntry,
++    ): LibrarySnapshot {
++        val entries = current?.entries.orEmpty().toMutableList()
++        val index = entries.indexOfFirst { it.id == saved.id || it.media.id == saved.media.id }
++        if (index >= 0) entries[index] = saved else entries += saved
++        return LibrarySnapshot(
++            entries = entries,
++            scoreFormat = current?.scoreFormat ?: app.hikari.core.model.ScoreFormat.POINT_100,
++        )
++    }
++}
+diff --git a/app/src/main/java/app/hikari/data/local/HikariFavoriteStore.kt b/app/src/main/java/app/hikari/data/local/HikariFavoriteStore.kt
+index 3fcc8e5b5f3cb913f1fee51c2bfb5662697ce091..46a5d99524b99ad0136f02f6a465763f3b119bb9 100644
+--- a/app/src/main/java/app/hikari/data/local/HikariFavoriteStore.kt
++++ b/app/src/main/java/app/hikari/data/local/HikariFavoriteStore.kt
+@@ -32,4 +32,23 @@ interface HikariFavoriteDao {
+ 
+     @Query("DELETE FROM hikari_favorites WHERE mediaId = :mediaId AND type = :type")
+     suspend fun remove(mediaId: Int, type: MediaType)
++
++    @Query(
++        """
++        UPDATE hikari_favorites
++        SET title = :title,
++            coverUrl = :coverUrl,
++            averageScore = :averageScore,
++            episodesOrChapters = :episodesOrChapters
++        WHERE mediaId = :mediaId AND type = :type
++        """,
++    )
++    suspend fun updateMetadata(
++        mediaId: Int,
++        type: MediaType,
++        title: String,
++        coverUrl: String?,
++        averageScore: Int?,
++        episodesOrChapters: Int?,
++    )
+ }
+diff --git a/app/src/main/java/app/hikari/data/local/HikariFavoritesRepository.kt b/app/src/main/java/app/hikari/data/local/HikariFavoritesRepository.kt
+index 092d13cfe72f55e02281bb72e31152969310a42a..ca3aa88c36cca1c8c743c68b4ae8b0018a5f7e4b 100644
+--- a/app/src/main/java/app/hikari/data/local/HikariFavoritesRepository.kt
++++ b/app/src/main/java/app/hikari/data/local/HikariFavoritesRepository.kt
+@@ -42,4 +42,16 @@ class HikariFavoritesRepository @Inject constructor(
+             )
+         }
+     }
++
++    /** Refreshes display metadata only when this title is already a local favorite. */
++    suspend fun refreshMetadata(media: MediaSummary) {
++        dao.updateMetadata(
++            mediaId = media.id,
++            type = media.type,
++            title = media.title,
++            coverUrl = media.coverUrl,
++            averageScore = media.averageScore,
++            episodesOrChapters = media.episodesOrChapters,
++        )
++    }
+ }
+diff --git a/app/src/main/java/app/hikari/data/local/HikariMigrations.kt b/app/src/main/java/app/hikari/data/local/HikariMigrations.kt
+new file mode 100644
+index 0000000000000000000000000000000000000000..05efedacdfba9ee7d8ff0ec25e2c5615e0dab95e
+--- /dev/null
++++ b/app/src/main/java/app/hikari/data/local/HikariMigrations.kt
+@@ -0,0 +1,23 @@
++package app.hikari.data.local
++
++import androidx.room.migration.Migration
++import androidx.sqlite.db.SupportSQLiteDatabase
++
++val MIGRATION_1_2 = object : Migration(1, 2) {
++    override fun migrate(database: SupportSQLiteDatabase) {
++        database.execSQL(
++            """
++            CREATE TABLE IF NOT EXISTS `hikari_favorites` (
++                `mediaId` INTEGER NOT NULL,
++                `type` TEXT NOT NULL,
++                `title` TEXT NOT NULL,
++                `coverUrl` TEXT,
++                `averageScore` INTEGER,
++                `episodesOrChapters` INTEGER,
++                `addedAt` INTEGER NOT NULL,
++                PRIMARY KEY(`mediaId`, `type`)
++            )
++            """.trimIndent(),
++        )
++    }
++}
+diff --git a/app/src/main/java/app/hikari/data/remote/AniListGraphQlService.kt b/app/src/main/java/app/hikari/data/remote/AniListGraphQlService.kt
+index 5669fbb2ff237293b692fae44e634b16094b1133..69a4d3e86a3bcedc9d7899c93e6cf76c2676f5b5 100644
+--- a/app/src/main/java/app/hikari/data/remote/AniListGraphQlService.kt
++++ b/app/src/main/java/app/hikari/data/remote/AniListGraphQlService.kt
+@@ -4,6 +4,7 @@ import app.hikari.core.auth.SecureTokenStore
+ import app.hikari.core.model.MediaSummary
+ import app.hikari.core.model.MediaType
+ import app.hikari.profile.AniListProfile
++import kotlinx.coroutines.CancellationException
+ import kotlinx.coroutines.Dispatchers
+ import kotlinx.coroutines.withContext
+ import okhttp3.MediaType.Companion.toMediaType
+@@ -25,18 +26,18 @@ class AniListGraphQlService @Inject constructor(
+     private val client: OkHttpClient,
+     private val tokenStore: SecureTokenStore,
+ ) {
+-    suspend fun trending(type: MediaType, page: Int = 1): List<MediaSummary> = runCatching {
+-        mediaPage(
++    suspend fun trending(type: MediaType, page: Int = 1): List<MediaSummary> {
++        return mediaPage(
+             "query(\$page:Int!, \$type:MediaType!){Page(page:\$page,perPage:20){media(type:\$type,sort:TRENDING_DESC){id type title{userPreferred romaji english native} coverImage{large} averageScore episodes chapters}}}",
+             mapOf("page" to page, "type" to type.name), type,
+         )
+-    }.getOrDefault(emptyList())
++    }
+ 
+-    suspend fun airingSoon(page: Int = 1, perPage: Int = 12, now: Long = System.currentTimeMillis() / 1000): List<MediaSummary> = runCatching {
++    suspend fun airingSoon(page: Int = 1, perPage: Int = 12, now: Long = System.currentTimeMillis() / 1000): List<MediaSummary> {
+         val query = "query(\$page:Int!, \$perPage:Int!, \$now:Int!){Page(page:\$page,perPage:\$perPage){airingSchedules(notYetAired:true,airingAt_greater:\$now,sort:TIME){episode airingAt media{id type title{userPreferred romaji english native} coverImage{large} averageScore episodes chapters}}}}"
+         val data = execute(query, mapOf("page" to page, "perPage" to perPage, "now" to now))
+             .getJSONObject("data").getJSONObject("Page").getJSONArray("airingSchedules")
+-        List(data.length()) { index ->
++        return List(data.length()) { index ->
+             val media = data.getJSONObject(index).getJSONObject("media")
+             val titleObject = media.getJSONObject("title")
+             val title = preferredTitle(titleObject)
+@@ -47,34 +48,34 @@ class AniListGraphQlService @Inject constructor(
+                 episodesOrChapters = media.optInt("episodes").takeIf { it != 0 },
+             )
+         }
+-    }.getOrDefault(emptyList())
++    }
+ 
+-    suspend fun search(query: String, type: MediaType?, page: Int = 1): List<MediaSummary> = runCatching {
++    suspend fun search(query: String, type: MediaType?, page: Int = 1): List<MediaSummary> {
+         val normalized = query.trim()
+         require(normalized.isNotBlank())
+         val typeClause = type?.let { ",type:${it.name}" }.orEmpty()
+         val searchQuery = "query(\$page:Int!, \$search:String!){Page(page:\$page,perPage:20){media(search:\$search$typeClause,sort:SEARCH_MATCH){id type title{userPreferred romaji english native} coverImage{large} averageScore episodes chapters}}}"
+-        mediaPage(searchQuery, mapOf("page" to page, "search" to normalized), type)
+-    }.getOrDefault(emptyList())
++        return mediaPage(searchQuery, mapOf("page" to page, "search" to normalized), type)
++    }
+ 
+     @Volatile
+     private var taxonomyCache: List<SearchTaxonomy>? = null
+ 
+-    suspend fun searchTaxonomies(query: String): List<SearchTaxonomy> = runCatching {
++    suspend fun searchTaxonomies(query: String): List<SearchTaxonomy> {
+         val normalized = query.trim()
+         require(normalized.isNotBlank())
+         val all = taxonomyCache ?: loadTaxonomies().also { taxonomyCache = it }
+-        all.filter { it.name.contains(normalized, ignoreCase = true) }
++        return all.filter { it.name.contains(normalized, ignoreCase = true) }
+             .sortedWith(compareBy<SearchTaxonomy> { !it.name.equals(normalized, ignoreCase = true) }.thenBy { it.name.lowercase() })
+             .take(60)
+-    }.getOrDefault(emptyList())
++    }
+ 
+-    suspend fun searchByTaxonomy(taxonomy: SearchTaxonomy, type: MediaType?, page: Int = 1): List<MediaSummary> = runCatching {
++    suspend fun searchByTaxonomy(taxonomy: SearchTaxonomy, type: MediaType?, page: Int = 1): List<MediaSummary> {
+         val typeClause = type?.let { ",type:${it.name}" }.orEmpty()
+         val argument = if (taxonomy.kind == SearchTaxonomyKind.GENRE) "genre" else "tag"
+         val searchQuery = "query(\$page:Int!, \$name:String!){Page(page:\$page,perPage:20){media($argument:\$name$typeClause,sort:POPULARITY_DESC){id type title{userPreferred romaji english native} coverImage{large} averageScore episodes chapters}}}"
+-        mediaPage(searchQuery, mapOf("page" to page, "name" to taxonomy.name), type)
+-    }.getOrDefault(emptyList())
++        return mediaPage(searchQuery, mapOf("page" to page, "name" to taxonomy.name), type)
++    }
+ 
+     private suspend fun loadTaxonomies(): List<SearchTaxonomy> {
+         val query = "query{GenreCollection MediaTagCollection{id name isAdult}}"
+@@ -96,7 +97,7 @@ class AniListGraphQlService @Inject constructor(
+         return result
+     }
+ 
+-    suspend fun personalizedRecommendations(): List<MediaSummary> = runCatching {
++    suspend fun personalizedRecommendations(): List<MediaSummary> {
+         val viewer = execute("query{Viewer{id}}", emptyMap())
+             .getJSONObject("data")
+             .getJSONObject("Viewer")
+@@ -122,7 +123,7 @@ class AniListGraphQlService @Inject constructor(
+             }
+         }
+ 
+-        grouped.values
++        return grouped.values
+             .sortedWith(
+                 compareByDescending<RecommendationCandidate> { it.occurrences }
+                     .thenByDescending { it.ratingTotal }
+@@ -131,7 +132,7 @@ class AniListGraphQlService @Inject constructor(
+             .map { it.media }
+             .distinctBy { it.id to it.type }
+             .take(10)
+-    }.getOrDefault(emptyList())
++    }
+ 
+     private suspend fun loadRecommendationCandidates(
+         userId: Int,
+@@ -199,9 +200,13 @@ class AniListGraphQlService @Inject constructor(
+         val aggregateVolumesRead = manga.optInt("volumesRead")
+         val aggregateMangaMeanScore = manga.optDouble("meanScore", 0.0)
+ 
+-        val syncedStats = runCatching {
++        val syncedStats = try {
+             loadViewerListStats(viewer.getInt("id"))
+-        }.getOrNull()
++        } catch (cancelled: CancellationException) {
++            throw cancelled
++        } catch (_: Throwable) {
++            null
++        }
+ 
+         val stats = syncedStats ?: ListStats(
+             animeCount = aggregateAnimeCount,
+@@ -324,4 +329,4 @@ private fun JSONArray.toMediaList(requestedType: MediaType?): List<MediaSummary>
+         coverUrl = item.optJSONObject("coverImage")?.optString("large"), averageScore = item.optInt("averageScore").takeIf { it != 0 },
+         episodesOrChapters = (if (type == MediaType.MANGA) item.optInt("chapters") else item.optInt("episodes")).takeIf { it != 0 },
+     )
+-}
+\ No newline at end of file
++}
+diff --git a/app/src/main/java/app/hikari/data/remote/AniListLibraryService.kt b/app/src/main/java/app/hikari/data/remote/AniListLibraryService.kt
+index fecb7fc7cf80082589028f48a415018a30f9bd78..6ffa79968ad1ec45182f5b4be77f550bd9fea771 100644
+--- a/app/src/main/java/app/hikari/data/remote/AniListLibraryService.kt
++++ b/app/src/main/java/app/hikari/data/remote/AniListLibraryService.kt
+@@ -21,12 +21,17 @@ data class LibrarySnapshot(
+     val scoreFormat: ScoreFormat,
+ )
+ 
++interface AniListLibraryRemote {
++    suspend fun library(type: MediaType): LibrarySnapshot
++    suspend fun updateEntry(entry: LibraryEntry, status: String, progress: Int, score: Double): LibraryEntry
++}
++
+ @Singleton
+ class AniListLibraryService @Inject constructor(
+     private val client: OkHttpClient,
+     private val tokenStore: SecureTokenStore,
+-) {
+-    suspend fun library(type: MediaType): LibrarySnapshot = withContext(Dispatchers.IO) {
++) : AniListLibraryRemote {
++    override suspend fun library(type: MediaType): LibrarySnapshot = withContext(Dispatchers.IO) {
+         val query = "query(\$userId:Int!,\$type:MediaType!){MediaListCollection(userId:\$userId,type:\$type){lists{name entries{id status score progress media{id type title{userPreferred romaji english native} coverImage{large} averageScore episodes chapters}}}}}"
+         val viewer = execute("query{Viewer{id mediaListOptions{scoreFormat}}}", emptyMap()).getJSONObject("data").getJSONObject("Viewer")
+         val scoreFormat = parseScoreFormat(viewer.getJSONObject("mediaListOptions").optString("scoreFormat"))
+@@ -68,7 +73,7 @@ class AniListLibraryService @Inject constructor(
+         return@withContext LibrarySnapshot(unique.values.toList(), scoreFormat)
+     }
+ 
+-    suspend fun updateEntry(entry: LibraryEntry, status: String, progress: Int, score: Double) = withContext(Dispatchers.IO) {
++    override suspend fun updateEntry(entry: LibraryEntry, status: String, progress: Int, score: Double): LibraryEntry = withContext(Dispatchers.IO) {
+         // New entries follow AniList's documented create shape: omit id, and avoid sending
+         // an explicit zero score because a new entry already has no score by default.
+         val hasExistingEntry = entry.id > 0
+@@ -91,7 +96,16 @@ class AniListLibraryService @Inject constructor(
+             put("progress", progress)
+             if (includeScore) put("score", score)
+         }
+-        execute(mutation, variables)
++        val saved = execute(mutation, variables)
++            .getJSONObject("data")
++            .getJSONObject("SaveMediaListEntry")
++        LibraryEntry(
++            id = saved.getInt("id"),
++            media = entry.media,
++            status = saved.optString("status", status),
++            progress = saved.optInt("progress", progress),
++            score = saved.optDouble("score", 0.0).takeIf { it > 0.0 },
++        )
+     }
+ 
+     private fun parseScoreFormat(value: String): ScoreFormat = when (value) {
+diff --git a/app/src/main/java/app/hikari/di/AppModule.kt b/app/src/main/java/app/hikari/di/AppModule.kt
+index b43b94c2ab347f95844112c57575be4779993d2c..3bb9b1d9e751027afe8ae510aa5a6f0b2fc6fd6e 100644
+--- a/app/src/main/java/app/hikari/di/AppModule.kt
++++ b/app/src/main/java/app/hikari/di/AppModule.kt
+@@ -6,7 +6,10 @@ import app.hikari.data.DefaultMediaRepository
+ import app.hikari.data.MediaRepository
+ import app.hikari.data.local.HikariDatabase
+ import app.hikari.data.local.HikariFavoriteDao
++import app.hikari.data.local.MIGRATION_1_2
+ import app.hikari.data.local.MediaCacheDao
++import app.hikari.data.remote.AniListLibraryRemote
++import app.hikari.data.remote.AniListLibraryService
+ import dagger.Binds
+ import dagger.Module
+ import dagger.Provides
+@@ -19,12 +22,15 @@ import javax.inject.Singleton
+ 
+ @Module
+ @InstallIn(SingletonComponent::class)
+-abstract class RepositoryModule { @Binds abstract fun bindMediaRepository(implementation: DefaultMediaRepository): MediaRepository }
++abstract class RepositoryModule {
++    @Binds abstract fun bindMediaRepository(implementation: DefaultMediaRepository): MediaRepository
++    @Binds abstract fun bindAniListLibraryRemote(implementation: AniListLibraryService): AniListLibraryRemote
++}
+ 
+ @Module
+ @InstallIn(SingletonComponent::class)
+ object StorageModule {
+-    @Provides @Singleton fun database(@ApplicationContext context: Context): HikariDatabase = Room.databaseBuilder(context, HikariDatabase::class.java, "hikari.db").fallbackToDestructiveMigration().build()
++    @Provides @Singleton fun database(@ApplicationContext context: Context): HikariDatabase = Room.databaseBuilder(context, HikariDatabase::class.java, "hikari.db").addMigrations(MIGRATION_1_2).build()
+     @Provides fun mediaCacheDao(database: HikariDatabase): MediaCacheDao = database.mediaCacheDao()
+     @Provides fun hikariFavoriteDao(database: HikariDatabase): HikariFavoriteDao = database.hikariFavoriteDao()
+     @Provides @Singleton
+diff --git a/app/src/main/java/app/hikari/library/LibraryScreen.kt b/app/src/main/java/app/hikari/library/LibraryScreen.kt
+index be467152ddc1043a272b02c395058c9a05ea1be4..a4500539079f85d0dc532f493da5f2d9448aaba5 100644
+--- a/app/src/main/java/app/hikari/library/LibraryScreen.kt
++++ b/app/src/main/java/app/hikari/library/LibraryScreen.kt
+@@ -56,24 +56,30 @@ import app.hikari.core.model.LibraryEntry
+ import app.hikari.core.model.MediaSummary
+ import app.hikari.core.model.MediaType
+ import app.hikari.core.model.ScoreFormat
++import app.hikari.data.AniListLibraryRepository
+ import app.hikari.data.local.HikariFavoritesRepository
+-import app.hikari.data.remote.AniListLibraryService
+ import coil3.compose.AsyncImage
+ import dagger.hilt.android.lifecycle.HiltViewModel
+ import kotlinx.coroutines.flow.MutableStateFlow
+ import kotlinx.coroutines.flow.StateFlow
+ import kotlinx.coroutines.flow.asStateFlow
++import kotlinx.coroutines.CancellationException
++import kotlinx.coroutines.Job
++import kotlinx.coroutines.flow.filterNotNull
+ import kotlinx.coroutines.launch
+ import javax.inject.Inject
+ import kotlin.math.roundToInt
+ 
+ @HiltViewModel
+ class LibraryViewModel @Inject constructor(
+-    private val api: AniListLibraryService,
++    private val library: AniListLibraryRepository,
+     private val favorites: HikariFavoritesRepository,
+ ) : ViewModel() {
+     private val _state = MutableStateFlow(LibraryUiState())
+     val state: StateFlow<LibraryUiState> = _state.asStateFlow()
++    private var selectedType = MediaType.ANIME
++    private var observationJob: Job? = null
++    private var refreshJob: Job? = null
+ 
+     init {
+         viewModelScope.launch {
+@@ -83,26 +89,61 @@ class LibraryViewModel @Inject constructor(
+         }
+     }
+ 
+-    fun load(type: MediaType) = viewModelScope.launch {
+-        _state.value = _state.value.copy(loading = true, error = null)
+-        runCatching { api.library(type) }
+-            .onSuccess { snapshot ->
+-                _state.value = _state.value.copy(entries = snapshot.entries, scoreFormat = snapshot.scoreFormat, loading = false)
++    fun selectType(type: MediaType) {
++        selectedType = type
++        observationJob?.cancel()
++        refreshJob?.cancel()
++        _state.value = _state.value.copy(entries = emptyList(), loading = true, error = null)
++
++        observationJob = viewModelScope.launch {
++            library.observe(type).filterNotNull().collect { snapshot ->
++                if (selectedType == type) {
++                    _state.value = _state.value.copy(
++                        entries = snapshot.entries,
++                        scoreFormat = snapshot.scoreFormat,
++                        loading = false,
++                        error = null,
++                    )
++                }
+             }
+-            .onFailure { error ->
+-                _state.value = _state.value.copy(loading = false, error = error.message ?: "Couldn't load your library.")
++        }
++        refresh(type)
++    }
++
++    fun refresh(type: MediaType = selectedType) {
++        if (type != selectedType) return
++        refreshJob?.cancel()
++        _state.value = _state.value.copy(loading = true, error = null)
++        refreshJob = viewModelScope.launch {
++            try {
++                library.refresh(type)
++            } catch (cancelled: CancellationException) {
++                throw cancelled
++            } catch (error: Throwable) {
++                if (selectedType == type) {
++                    _state.value = _state.value.copy(
++                        loading = false,
++                        error = error.message ?: "Couldn't load your library.",
++                    )
++                }
+             }
++        }
+     }
+ 
+     fun save(type: MediaType, entry: LibraryEntry, status: String, progress: Int, score: Double, onDone: () -> Unit) = viewModelScope.launch {
+         _state.value = _state.value.copy(saving = true, error = null)
+-        runCatching { api.updateEntry(entry, status, progress, score) }
+-            .onSuccess {
+-                _state.value = _state.value.copy(saving = false)
+-                load(type)
+-                onDone()
+-            }
+-            .onFailure { error -> _state.value = _state.value.copy(saving = false, error = error.message ?: "Couldn't save your AniList changes.") }
++        try {
++            library.updateEntry(type, entry, status, progress, score)
++            _state.value = _state.value.copy(saving = false)
++            onDone()
++        } catch (cancelled: CancellationException) {
++            throw cancelled
++        } catch (error: Throwable) {
++            _state.value = _state.value.copy(
++                saving = false,
++                error = error.message ?: "Couldn't save your AniList changes.",
++            )
++        }
+     }
+ 
+     fun toggleFavorite(media: MediaSummary) = viewModelScope.launch {
+@@ -132,7 +173,7 @@ fun LibraryScreen(
+     var selected by remember { mutableStateOf<LibraryEntry?>(null) }
+     val state by vm.state.collectAsState()
+ 
+-    LaunchedEffect(signedIn, type) { if (signedIn) vm.load(type) }
++    LaunchedEffect(signedIn, type) { if (signedIn) vm.selectType(type) }
+ 
+     if (!signedIn) {
+         Column(Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+@@ -160,12 +201,12 @@ fun LibraryScreen(
+                     Text("Library", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
+                     Text("AniList tracking + Hikari favorites", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                 }
+-                IconButton(onClick = { vm.load(type) }, enabled = !state.loading && !state.saving) {
++                IconButton(onClick = { vm.refresh(type) }, enabled = !state.loading && !state.saving) {
+                     if (state.loading) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp) else Icon(Icons.Outlined.Refresh, "Refresh library")
+                 }
+             }
+         }
+-        item { ChoiceRow(listOf("ANIME", "MANGA"), type.name) { type = MediaType.valueOf(it); status = "ALL" } }
++        item { ChoiceRow(listOf("ANIME", "MANGA"), type.name) { type = MediaType.valueOf(it); status = "ALL"; selected = null } }
+         item { ChoiceRow(statuses, status) { status = it } }
+         if (status == "FAVORITES") {
+             item {
+@@ -185,7 +226,7 @@ fun LibraryScreen(
+             Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)) {
+                 Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                     Text(state.error.orEmpty(), Modifier.weight(1f), color = MaterialTheme.colorScheme.onErrorContainer)
+-                    TextButton(onClick = { vm.load(type) }) { Text("Retry") }
++                    TextButton(onClick = { vm.refresh(type) }) { Text("Retry") }
+                 }
+             }
+         }
+@@ -322,11 +363,11 @@ private fun ChoiceRow(options: List<String>, selected: String, onSelect: (String
+     }
+ }
+ 
+-private fun statusOptions(type: MediaType): List<String> = listOf("ALL", "CURRENT", "PLANNING", "COMPLETED", "REPEATING", "PAUSED", "DROPPED")
++private fun statusOptions(type: MediaType): List<String> = listOf("CURRENT", "PLANNING", "COMPLETED", "REPEATING", "PAUSED", "DROPPED")
+ private fun optionLabel(value: String): String = when (value) {
+     "ALL" -> "All"; "CURRENT" -> "Watching"; "PLANNING" -> "Planning"; "REPEATING" -> "Rewatching"; "REREADING" -> "Rereading"; "COMPLETED" -> "Completed"; "PAUSED" -> "Paused"; "DROPPED" -> "Dropped"; "FAVORITES" -> "♥ Favorites"; else -> value.lowercase().replace('_', ' ').replaceFirstChar { it.uppercase() }
+ }
+ private fun statusLabel(value: String, type: MediaType): String = when (type) { MediaType.ANIME -> optionLabel(value); MediaType.MANGA -> when (value) { "CURRENT" -> "Reading"; "PLANNING" -> "Plan to read"; "REPEATING" -> "Rereading"; else -> optionLabel(value) } }
+ private fun progressLabel(entry: LibraryEntry, type: MediaType): String = when (type) { MediaType.ANIME -> "${entry.progress} episodes${entry.media.episodesOrChapters?.let { " / $it" } ?: ""}"; MediaType.MANGA -> "${entry.progress} chapters${entry.media.episodesOrChapters?.let { " / $it" } ?: ""}" }
+ private fun progressLabel(type: MediaType): String = if (type == MediaType.ANIME) "Episodes watched" else "Chapters read"
+-private fun formatScore(score: Double): String = if (score % 1.0 == 0.0) score.toInt().toString() else "%.1f".format(score)
+\ No newline at end of file
++private fun formatScore(score: Double): String = if (score % 1.0 == 0.0) score.toInt().toString() else "%.1f".format(score)
+diff --git a/app/src/main/java/app/hikari/library/LibraryScreenCompat.kt b/app/src/main/java/app/hikari/library/LibraryScreenCompat.kt
+deleted file mode 100644
+index 5e4e939fa53d6b34959cb3a50d63a367d2a0bc2b..0000000000000000000000000000000000000000
+--- a/app/src/main/java/app/hikari/library/LibraryScreenCompat.kt
++++ /dev/null
+@@ -1,21 +0,0 @@
+-package app.hikari.library
+-
+-import androidx.compose.foundation.layout.PaddingValues
+-import androidx.compose.runtime.Composable
+-
+-/**
+- * Compatibility overload for callers that do not need media-detail navigation.
+- * The full LibraryScreen exposes onMediaClick for favorites; this keeps older
+- * call sites source-compatible while the navigation wiring is completed.
+- */
+-@Composable
+-fun LibraryScreen(
+-    signedIn: Boolean,
+-    padding: PaddingValues,
+-) {
+-    LibraryScreen(
+-        signedIn = signedIn,
+-        padding = padding,
+-        onMediaClick = {},
+-    )
+-}
+diff --git a/app/src/main/java/app/hikari/media/CreditDetailsScreen.kt b/app/src/main/java/app/hikari/media/CreditDetailsScreen.kt
+index a7a1044dcd8af680ffd743a38b3620f0f8698dcd..7476c5d16f0ecfcad04b9c65857c42a5368ad0bd 100644
+--- a/app/src/main/java/app/hikari/media/CreditDetailsScreen.kt
++++ b/app/src/main/java/app/hikari/media/CreditDetailsScreen.kt
+@@ -45,7 +45,9 @@ import app.hikari.core.auth.SecureTokenStore
+ import app.hikari.core.model.MediaType
+ import coil3.compose.AsyncImage
+ import dagger.hilt.android.lifecycle.HiltViewModel
++import kotlinx.coroutines.CancellationException
+ import kotlinx.coroutines.Dispatchers
++import kotlinx.coroutines.Job
+ import kotlinx.coroutines.flow.MutableStateFlow
+ import kotlinx.coroutines.flow.StateFlow
+ import kotlinx.coroutines.flow.asStateFlow
+@@ -96,7 +98,26 @@ internal sealed interface CreditUiState { data object Loading : CreditUiState; d
+ @HiltViewModel
+ internal class CreditDetailsViewModel @Inject constructor(private val service: AniListCreditService) : ViewModel() {
+     private val _state = MutableStateFlow<CreditUiState>(CreditUiState.Loading); val state: StateFlow<CreditUiState> = _state.asStateFlow()
+-    fun load(target: CreditTarget) { viewModelScope.launch { _state.value = CreditUiState.Loading; _state.value = runCatching { if (target.type == CreditType.CHARACTER) service.character(target.id) else service.person(target.id) }.fold({ CreditUiState.Ready(it) }, { CreditUiState.Error("Couldn't load this profile. Try again.") }) } }
++    private var loadJob: Job? = null
++    private var generation = 0L
++
++    fun load(target: CreditTarget) {
++        val requestGeneration = ++generation
++        loadJob?.cancel()
++        _state.value = CreditUiState.Loading
++        loadJob = viewModelScope.launch {
++            try {
++                val detail = if (target.type == CreditType.CHARACTER) service.character(target.id) else service.person(target.id)
++                if (requestGeneration == generation) _state.value = CreditUiState.Ready(detail)
++            } catch (cancelled: CancellationException) {
++                throw cancelled
++            } catch (_: Throwable) {
++                if (requestGeneration == generation) {
++                    _state.value = CreditUiState.Error("Couldn't load this profile. Try again.")
++                }
++            }
++        }
++    }
+ }
+ 
+ @Composable
+diff --git a/app/src/main/java/app/hikari/media/MediaDetailsScreen.kt b/app/src/main/java/app/hikari/media/MediaDetailsScreen.kt
+index a6db671bbea3d80551654d40141421d7e4ed0593..d502310c104640d54f5919e9dd4ef5c43fde7b99 100644
+--- a/app/src/main/java/app/hikari/media/MediaDetailsScreen.kt
++++ b/app/src/main/java/app/hikari/media/MediaDetailsScreen.kt
+@@ -26,6 +26,8 @@ import androidx.compose.material.icons.Icons
+ import androidx.compose.material.icons.outlined.ArrowBack
+ import androidx.compose.material.icons.outlined.AutoAwesome
+ import androidx.compose.material.icons.outlined.BookmarkAdd
++import androidx.compose.material.icons.outlined.Favorite
++import androidx.compose.material.icons.outlined.FavoriteBorder
+ import androidx.compose.material.icons.outlined.Star
+ import androidx.compose.material3.AlertDialog
+ import androidx.compose.material3.Button
+@@ -65,22 +67,171 @@ import app.hikari.core.model.MediaRelation
+ import app.hikari.core.model.MediaStaff
+ import app.hikari.core.model.MediaSummary
+ import app.hikari.core.model.ScoreFormat
+-import app.hikari.data.remote.AniListLibraryService
++import app.hikari.data.AniListLibraryRepository
++import app.hikari.data.local.HikariFavoritesRepository
+ import app.hikari.data.remote.AniListMediaDetailService
+ import coil3.compose.AsyncImage
+ import dagger.hilt.android.lifecycle.HiltViewModel
+ import kotlinx.coroutines.CancellationException
++import kotlinx.coroutines.Job
+ import kotlinx.coroutines.flow.MutableStateFlow
+ import kotlinx.coroutines.flow.StateFlow
+ import kotlinx.coroutines.flow.asStateFlow
++import kotlinx.coroutines.flow.filterNotNull
+ import kotlinx.coroutines.launch
+ import javax.inject.Inject
+ import kotlin.math.roundToInt
+ 
+-sealed interface MediaDetailState { data object Loading : MediaDetailState; data class Ready(val media: MediaDetail) : MediaDetailState; data class Error(val message: String) : MediaDetailState }
+-@HiltViewModel class MediaDetailsViewModel @Inject constructor(private val service: AniListMediaDetailService) : ViewModel() { private val _state = MutableStateFlow<MediaDetailState>(MediaDetailState.Loading); val state: StateFlow<MediaDetailState> = _state.asStateFlow(); fun load(id: Int) { viewModelScope.launch { _state.value = MediaDetailState.Loading; _state.value = runCatching { service.detail(id) }.fold({ MediaDetailState.Ready(it) }, { MediaDetailState.Error("Couldn't load this title. Try again.") }) } } }
++sealed interface MediaDetailState {
++    data object Loading : MediaDetailState
++    data class Ready(val media: MediaDetail, val isFavorite: Boolean) : MediaDetailState
++    data class Error(val message: String) : MediaDetailState
++}
++
++@HiltViewModel
++class MediaDetailsViewModel @Inject constructor(
++    private val service: AniListMediaDetailService,
++    private val favorites: HikariFavoritesRepository,
++) : ViewModel() {
++    private val _state = MutableStateFlow<MediaDetailState>(MediaDetailState.Loading)
++    val state: StateFlow<MediaDetailState> = _state.asStateFlow()
++    private var loadJob: Job? = null
++    private var favoriteJob: Job? = null
++    private var requestGeneration = 0L
++    private var currentFavorite = false
++
++    fun load(summary: MediaSummary) {
++        val generation = ++requestGeneration
++        loadJob?.cancel()
++        favoriteJob?.cancel()
++        currentFavorite = false
++        _state.value = MediaDetailState.Loading
++
++        favoriteJob = viewModelScope.launch {
++            favorites.observeIsFavorite(summary.id, summary.type).collect { isFavorite ->
++                if (generation != requestGeneration) return@collect
++                currentFavorite = isFavorite
++                val current = _state.value
++                if (current is MediaDetailState.Ready && current.media.summary.id == summary.id) {
++                    _state.value = current.copy(isFavorite = isFavorite)
++                }
++            }
++        }
++
++        loadJob = viewModelScope.launch {
++            try {
++                val media = service.detail(summary.id)
++                if (generation != requestGeneration || media.summary.id != summary.id) return@launch
++                _state.value = MediaDetailState.Ready(media, currentFavorite)
++                try {
++                    favorites.refreshMetadata(media.summary)
++                } catch (cancelled: CancellationException) {
++                    throw cancelled
++                } catch (_: Throwable) {
++                    // Favorite metadata repair must not replace valid media details with an error.
++                }
++            } catch (cancelled: CancellationException) {
++                throw cancelled
++            } catch (_: Throwable) {
++                if (generation == requestGeneration) {
++                    _state.value = MediaDetailState.Error("Couldn't load this title. Try again.")
++                }
++            }
++        }
++    }
++
++    fun toggleFavorite() {
++        val current = _state.value as? MediaDetailState.Ready ?: return
++        viewModelScope.launch {
++            try {
++                favorites.toggle(current.media.summary, current.isFavorite)
++            } catch (cancelled: CancellationException) {
++                throw cancelled
++            }
++        }
++    }
++}
++
+ sealed interface MediaTrackingState { data object Hidden : MediaTrackingState; data object Loading : MediaTrackingState; data class Ready(val entry: LibraryEntry, val scoreFormat: ScoreFormat, val saving: Boolean = false, val error: String? = null) : MediaTrackingState; data class Error(val message: String) : MediaTrackingState }
+-@HiltViewModel class MediaTrackingViewModel @Inject constructor(private val service: AniListLibraryService) : ViewModel() { private val _state = MutableStateFlow<MediaTrackingState>(MediaTrackingState.Hidden); val state: StateFlow<MediaTrackingState> = _state.asStateFlow(); fun open(media: MediaSummary) { viewModelScope.launch { _state.value = MediaTrackingState.Loading; runCatching { service.library(media.type) }.fold({ snapshot -> _state.value = MediaTrackingState.Ready(snapshot.entries.firstOrNull { it.media.id == media.id } ?: LibraryEntry(0, media, "PLANNING", 0, null), snapshot.scoreFormat) }, { _state.value = MediaTrackingState.Error("Couldn't load your AniList list. Make sure you're signed in and try again.") }) } }; fun dismiss() { _state.value = MediaTrackingState.Hidden }; fun save(entry: LibraryEntry, status: String, progress: Int, score: Double) { val current = _state.value as? MediaTrackingState.Ready ?: return; _state.value = current.copy(saving = true, error = null); viewModelScope.launch { runCatching { service.updateEntry(entry, status, progress, score) }.fold({ _state.value = MediaTrackingState.Hidden }, { _state.value = current.copy(saving = false, error = "Couldn't save your AniList changes. Try again.") }) } }; fun retry(media: MediaSummary) = open(media) }
++
++@HiltViewModel
++class MediaTrackingViewModel @Inject constructor(
++    private val library: AniListLibraryRepository,
++) : ViewModel() {
++    private val _state = MutableStateFlow<MediaTrackingState>(MediaTrackingState.Hidden)
++    val state: StateFlow<MediaTrackingState> = _state.asStateFlow()
++    private var activeMedia: MediaSummary? = null
++    private var observationJob: Job? = null
++    private var refreshJob: Job? = null
++    private var saveJob: Job? = null
++
++    fun open(media: MediaSummary) {
++        activeMedia = media
++        observationJob?.cancel()
++        refreshJob?.cancel()
++        _state.value = MediaTrackingState.Loading
++
++        observationJob = viewModelScope.launch {
++            library.observe(media.type).filterNotNull().collect { snapshot ->
++                if (activeMedia?.let { it.id == media.id && it.type == media.type } != true) return@collect
++                val current = _state.value as? MediaTrackingState.Ready
++                _state.value = MediaTrackingState.Ready(
++                    entry = snapshot.entries.firstOrNull { it.media.id == media.id }
++                        ?: LibraryEntry(0, media, "PLANNING", 0, null),
++                    scoreFormat = snapshot.scoreFormat,
++                    saving = current?.saving == true,
++                    error = current?.error,
++                )
++            }
++        }
++
++        refreshJob = viewModelScope.launch {
++            try {
++                library.refresh(media.type)
++            } catch (cancelled: CancellationException) {
++                throw cancelled
++            } catch (_: Throwable) {
++                val current = _state.value
++                _state.value = if (current is MediaTrackingState.Ready) {
++                    current.copy(error = "Couldn't refresh your AniList list. Showing the last synced value.")
++                } else {
++                    MediaTrackingState.Error("Couldn't load your AniList list. Make sure you're signed in and try again.")
++                }
++            }
++        }
++    }
++
++    fun dismiss() {
++        activeMedia = null
++        observationJob?.cancel()
++        refreshJob?.cancel()
++        saveJob?.cancel()
++        _state.value = MediaTrackingState.Hidden
++    }
++
++    fun save(entry: LibraryEntry, status: String, progress: Int, score: Double) {
++        val current = _state.value as? MediaTrackingState.Ready ?: return
++        _state.value = current.copy(saving = true, error = null)
++        saveJob?.cancel()
++        saveJob = viewModelScope.launch {
++            try {
++                library.updateEntry(entry.media.type, entry, status, progress, score)
++                saveJob = null
++                dismiss()
++            } catch (cancelled: CancellationException) {
++                throw cancelled
++            } catch (_: Throwable) {
++                val latest = _state.value as? MediaTrackingState.Ready ?: current
++                _state.value = latest.copy(
++                    saving = false,
++                    error = "Couldn't save your AniList changes. Try again.",
++                )
++            }
++        }
++    }
++
++    fun retry(media: MediaSummary) = open(media)
++}
+ 
+ @Composable fun MediaDetailsScreen(summary: MediaSummary, onBack: () -> Unit, vm: MediaDetailsViewModel = hiltViewModel(), trackingVm: MediaTrackingViewModel = hiltViewModel()) {
+     val state by vm.state.collectAsState()
+@@ -91,8 +242,10 @@ sealed interface MediaTrackingState { data object Hidden : MediaTrackingState; d
+     var backProgress by remember { mutableStateOf(0f) }
+     var backSwipeEdge by remember { mutableStateOf(BackEventCompat.EDGE_LEFT) }
+ 
+-    LaunchedEffect(currentSummary.id) { vm.load(currentSummary.id) }
+-    val currentMedia = (state as? MediaDetailState.Ready)?.media
++    LaunchedEffect(currentSummary.id, currentSummary.type) { vm.load(currentSummary) }
++    val currentMedia = (state as? MediaDetailState.Ready)?.media?.takeIf {
++        it.summary.id == currentSummary.id && it.summary.type == currentSummary.type
++    }
+ 
+     fun goBack() {
+         if (history.isNotEmpty()) {
+@@ -108,9 +261,11 @@ sealed interface MediaTrackingState { data object Hidden : MediaTrackingState; d
+         history.lastOrNull()?.detail?.let { previous ->
+             DetailContent(
+                 media = previous,
++                isFavorite = false,
+                 onBack = {},
+                 onOpenRelation = {},
+                 onOpenTracking = {},
++                onToggleFavorite = {},
+                 onOpenCredit = {}
+             )
+         }
+@@ -121,16 +276,24 @@ sealed interface MediaTrackingState { data object Hidden : MediaTrackingState; d
+         Box(Modifier.fillMaxSize().offset { IntOffset(offsetX, 0) }) {
+             when (val current = state) {
+                 MediaDetailState.Loading -> DetailLoading { goBack() }
+-                is MediaDetailState.Error -> DetailError(current.message, { goBack() }) { vm.load(currentSummary.id) }
+-                is MediaDetailState.Ready -> DetailContent(
+-                    current.media,
+-                    { goBack() },
+-                    { relation ->
+-                        history = history + MediaHistoryEntry(currentSummary, current.media)
+-                        currentSummary = relation
+-                    },
+-                    { trackingVm.open(it) }
+-                ) { creditTarget = it }
++                is MediaDetailState.Error -> DetailError(current.message, { goBack() }) { vm.load(currentSummary) }
++                is MediaDetailState.Ready -> {
++                    if (current.media.summary.id != currentSummary.id || current.media.summary.type != currentSummary.type) {
++                        DetailLoading { goBack() }
++                    } else {
++                        DetailContent(
++                            current.media,
++                            current.isFavorite,
++                            { goBack() },
++                            { relation ->
++                                history = history + MediaHistoryEntry(currentSummary, current.media)
++                                currentSummary = relation
++                            },
++                            { trackingVm.open(it) },
++                            vm::toggleFavorite,
++                        ) { creditTarget = it }
++                    }
++                }
+             }
+         }
+ 
+@@ -182,9 +345,9 @@ private data class MediaHistoryEntry(val summary: MediaSummary, val detail: Medi
+ @Composable private fun TrackingErrorDialog(message: String, onDismiss: () -> Unit, onRetry: () -> Unit) { AlertDialog(onDismissRequest = onDismiss, title = { Text("AniList tracking") }, text = { Text(message, color = MaterialTheme.colorScheme.onSurfaceVariant) }, confirmButton = { Button(onClick = onRetry) { Text("Retry") } }, dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }) }
+ @Composable private fun DetailLoading(onBack: () -> Unit) { Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) { IconButton(onClick = onBack, modifier = Modifier.padding(12.dp)) { Icon(Icons.Outlined.ArrowBack, "Back") }; Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() } } }
+ @Composable private fun DetailError(message: String, onBack: () -> Unit, onRetry: () -> Unit) { Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) { IconButton(onClick = onBack, modifier = Modifier.padding(12.dp)) { Icon(Icons.Outlined.ArrowBack, "Back") }; Column(Modifier.fillMaxSize().padding(28.dp), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) { Text(message, color = MaterialTheme.colorScheme.onSurfaceVariant); Spacer(Modifier.height(16.dp)); Button(onClick = onRetry) { Text("Retry") } } } }
+-@Composable private fun DetailContent(media: MediaDetail, onBack: () -> Unit, onOpenRelation: (MediaSummary) -> Unit, onOpenTracking: (MediaSummary) -> Unit, onOpenCredit: (CreditTarget) -> Unit) { LazyColumn(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background), contentPadding = PaddingValues(bottom = 36.dp)) { item { Box(Modifier.fillMaxWidth().aspectRatio(3f).background(MaterialTheme.colorScheme.surfaceVariant)) { media.bannerUrl?.let { AsyncImage(model = it, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }; IconButton(onClick = onBack, modifier = Modifier.padding(12.dp).align(Alignment.TopStart).background(MaterialTheme.colorScheme.surface.copy(alpha = .86f), RoundedCornerShape(50))) { Icon(Icons.Outlined.ArrowBack, "Back") } } }; item { MediaIdentity(media, onOpenTracking) }; item { InfoStrip(media) }; media.description?.takeIf { it.isNotBlank() }?.let { description -> item { DetailSection("The story") { Text(description, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyLarge) } } }; if (media.genres.isNotEmpty()) item { DetailSection("Genres") { TagRow(media.genres) } }; if (media.tags.isNotEmpty()) item { DetailSection("Themes & tags") { TagRow(media.tags.take(16)) } }; if (media.characters.isNotEmpty()) item { CastSection(media.characters, onOpenCredit) }; if (media.staff.isNotEmpty()) item { StaffSection(media.staff, onOpenCredit) }; if (media.studios.isNotEmpty()) item { DetailSection("Production") { ProductionBlock(media.studios) } }; if (media.relations.isNotEmpty()) { item { DetailSection("Universe") { Text("Connected stories and editions", color = MaterialTheme.colorScheme.onSurfaceVariant) } }; items(media.relations.take(12), key = { "relation-${it.relationType}-${it.media.id}" }) { relation -> RelationCard(relation, onOpenRelation) } } } }
+-@Composable private fun MediaIdentity(media: MediaDetail, onOpenTracking: (MediaSummary) -> Unit) { Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(top = 12.dp), verticalAlignment = Alignment.Bottom) { Box(Modifier.width(126.dp).aspectRatio(.7f).clip(RoundedCornerShape(18.dp)).background(MaterialTheme.colorScheme.surfaceVariant)) { media.summary.coverUrl?.let { AsyncImage(model = it, contentDescription = media.summary.title, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop) } }; Spacer(Modifier.width(16.dp)); Column(Modifier.weight(1f).padding(bottom = 6.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) { Text(media.summary.title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, maxLines = 4, overflow = TextOverflow.Ellipsis); Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) { MetaPill(if (media.summary.type.name == "ANIME") "ANIME" else "MANGA", true); media.status?.let { MetaPill(it.replace('_', ' ').uppercase(), false) } }; media.summary.averageScore?.let { score -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) { Icon(Icons.Outlined.Star, null, Modifier.size(17.dp), tint = MaterialTheme.colorScheme.primary); Text("${score / 10f}", fontWeight = FontWeight.Bold); Text("/ 10", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium) } } } }; Button(onClick = { onOpenTracking(media.summary) }, modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 14.dp), shape = RoundedCornerShape(16.dp)) { Icon(Icons.Outlined.BookmarkAdd, null, Modifier.size(19.dp)); Spacer(Modifier.width(8.dp)); Text("Track on AniList") } }
+-@Composable private fun InfoStrip(media: MediaDetail) { LazyRow(contentPadding = PaddingValues(horizontal = 20.dp), horizontalArrangement = Arrangement.spacedBy(9.dp)) { media.format?.let { item { StatPill("FORMAT", it.replace('_', ' ')) } }; media.summary.episodesOrChapters?.let { value -> item { StatPill(if (media.summary.type.name == "ANIME") "EPISODES" else "CHAPTERS", value.toString()) } }; media.duration?.let { item { StatPill("RUNTIME", "${it}m") } }; media.seasonYear?.let { year -> item { StatPill("SEASON", listOfNotNull(media.season, year.toString()).joinToString(" ")) } }; media.startDate?.let { item { StatPill("STARTED", it) } }; media.endDate?.let { item { StatPill("ENDED", it) } }; media.popularity?.let { item { StatPill("POPULARITY", compactNumber(it)) } }; media.favourites?.let { item { StatPill("FAVORITES", compactNumber(it)) } } } }
++@Composable private fun DetailContent(media: MediaDetail, isFavorite: Boolean, onBack: () -> Unit, onOpenRelation: (MediaSummary) -> Unit, onOpenTracking: (MediaSummary) -> Unit, onToggleFavorite: () -> Unit, onOpenCredit: (CreditTarget) -> Unit) { LazyColumn(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background), contentPadding = PaddingValues(bottom = 36.dp)) { item { Box(Modifier.fillMaxWidth().aspectRatio(3f).background(MaterialTheme.colorScheme.surfaceVariant)) { media.bannerUrl?.let { AsyncImage(model = it, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }; IconButton(onClick = onBack, modifier = Modifier.padding(12.dp).align(Alignment.TopStart).background(MaterialTheme.colorScheme.surface.copy(alpha = .86f), RoundedCornerShape(50))) { Icon(Icons.Outlined.ArrowBack, "Back") } } }; item { MediaIdentity(media, isFavorite, onOpenTracking, onToggleFavorite) }; item { InfoStrip(media) }; media.description?.takeIf { it.isNotBlank() }?.let { description -> item { DetailSection("The story") { Text(description, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyLarge) } } }; if (media.genres.isNotEmpty()) item { DetailSection("Genres") { TagRow(media.genres) } }; if (media.tags.isNotEmpty()) item { DetailSection("Themes & tags") { TagRow(media.tags.take(16)) } }; if (media.characters.isNotEmpty()) item { CastSection(media.characters, onOpenCredit) }; if (media.staff.isNotEmpty()) item { StaffSection(media.staff, onOpenCredit) }; if (media.studios.isNotEmpty()) item { DetailSection("Production") { ProductionBlock(media.studios) } }; if (media.relations.isNotEmpty()) { item { DetailSection("Universe") { Text("Connected stories and editions", color = MaterialTheme.colorScheme.onSurfaceVariant) } }; items(media.relations.take(12), key = { "relation-${it.relationType}-${it.media.id}" }) { relation -> RelationCard(relation, onOpenRelation) } } } }
++@Composable private fun MediaIdentity(media: MediaDetail, isFavorite: Boolean, onOpenTracking: (MediaSummary) -> Unit, onToggleFavorite: () -> Unit) { Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(top = 12.dp), verticalAlignment = Alignment.Bottom) { Box(Modifier.width(126.dp).aspectRatio(.7f).clip(RoundedCornerShape(18.dp)).background(MaterialTheme.colorScheme.surfaceVariant)) { media.summary.coverUrl?.let { AsyncImage(model = it, contentDescription = media.summary.title, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop) } }; Spacer(Modifier.width(16.dp)); Column(Modifier.weight(1f).padding(bottom = 6.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) { Text(media.summary.title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, maxLines = 4, overflow = TextOverflow.Ellipsis); Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) { MetaPill(if (media.summary.type.name == "ANIME") "ANIME" else "MANGA", true); media.status?.let { MetaPill(it.replace('_', ' ').uppercase(), false) } }; media.summary.averageScore?.let { score -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) { Icon(Icons.Outlined.Star, null, Modifier.size(17.dp), tint = MaterialTheme.colorScheme.primary); Text("${score / 10f}", fontWeight = FontWeight.Bold); Text("/ 10", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium) } } } }; Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 14.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) { Button(onClick = { onOpenTracking(media.summary) }, modifier = Modifier.weight(1f), shape = RoundedCornerShape(16.dp)) { Icon(Icons.Outlined.BookmarkAdd, null, Modifier.size(19.dp)); Spacer(Modifier.width(8.dp)); Text("Track on AniList") }; IconButton(onClick = onToggleFavorite) { Icon(if (isFavorite) Icons.Outlined.Favorite else Icons.Outlined.FavoriteBorder, if (isFavorite) "Remove from Hikari favorites" else "Add to Hikari favorites", tint = if (isFavorite) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant) } } }
++@Composable private fun InfoStrip(media: MediaDetail) { LazyRow(contentPadding = PaddingValues(horizontal = 20.dp), horizontalArrangement = Arrangement.spacedBy(9.dp)) { media.format?.let { item { StatPill("FORMAT", it.replace('_', ' ')) } }; media.summary.episodesOrChapters?.let { value -> item { StatPill(if (media.summary.type.name == "ANIME") "EPISODES" else "CHAPTERS", value.toString()) } }; media.duration?.let { item { StatPill("RUNTIME", "${it}m") } }; media.seasonYear?.let { year -> item { StatPill("SEASON", listOfNotNull(media.season, year.toString()).joinToString(" ")) } }; media.startDate?.let { item { StatPill("STARTED", it) } }; media.endDate?.let { item { StatPill("ENDED", it) } }; media.popularity?.let { item { StatPill("POPULARITY", compactNumber(it)) } }; media.favourites?.let { item { StatPill("ANILIST FAVORITES", compactNumber(it)) } } } }
+ @Composable private fun StatPill(label: String, value: String) { Column(Modifier.clip(RoundedCornerShape(14.dp)).background(MaterialTheme.colorScheme.surfaceVariant).padding(horizontal = 12.dp, vertical = 9.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) { Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold); Text(value, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold) } }
+ @Composable private fun MetaPill(text: String, accent: Boolean) { Text(text, Modifier.clip(RoundedCornerShape(8.dp)).background(if (accent) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant).padding(horizontal = 7.dp, vertical = 4.dp), style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = if (accent) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant) }
+ @Composable private fun CastSection(characters: List<MediaCharacter>, onOpenCredit: (CreditTarget) -> Unit) { DetailSection("Cast") { LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) { items(characters, key = { it.id }) { character -> Column(Modifier.width(132.dp).clickable { onOpenCredit(CreditTarget(character.id, CreditType.CHARACTER)) }, verticalArrangement = Arrangement.spacedBy(7.dp)) { Box(Modifier.fillMaxWidth().height(178.dp).clip(RoundedCornerShape(18.dp)).background(MaterialTheme.colorScheme.surfaceVariant)) { character.imageUrl?.let { AsyncImage(model = it, contentDescription = character.name, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }; Box(Modifier.align(Alignment.BottomStart).fillMaxWidth().background(MaterialTheme.colorScheme.surface.copy(alpha = .82f)).padding(8.dp)) { Text(character.role, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary) } }; Text(character.name, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis); character.voiceActorName?.let { Text("VA · $it", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis) } } } } } }
+diff --git a/app/src/main/java/app/hikari/profile/ProfileViewModel.kt b/app/src/main/java/app/hikari/profile/ProfileViewModel.kt
+index 80c7a9f0a97678e796bd52f375d05bde879f06f8..83118964f425e0523a927fdf76e89f6bc869946e 100644
+--- a/app/src/main/java/app/hikari/profile/ProfileViewModel.kt
++++ b/app/src/main/java/app/hikari/profile/ProfileViewModel.kt
+@@ -2,39 +2,87 @@ package app.hikari.profile
+ 
+ import androidx.lifecycle.ViewModel
+ import androidx.lifecycle.viewModelScope
++import app.hikari.data.AniListLibraryRepository
+ import app.hikari.data.remote.AniListGraphQlService
+ import dagger.hilt.android.lifecycle.HiltViewModel
+ import javax.inject.Inject
+ import kotlinx.coroutines.flow.MutableStateFlow
+ import kotlinx.coroutines.flow.StateFlow
+ import kotlinx.coroutines.flow.asStateFlow
++import kotlinx.coroutines.flow.drop
++import kotlinx.coroutines.CancellationException
++import kotlinx.coroutines.Job
+ import kotlinx.coroutines.launch
+ 
+ @HiltViewModel
+ class ProfileViewModel @Inject constructor(
+     private val api: AniListGraphQlService,
++    private val library: AniListLibraryRepository,
+ ) : ViewModel() {
+     private val _state = MutableStateFlow(ProfileUiState())
+     val state: StateFlow<ProfileUiState> = _state.asStateFlow()
++    private var loadJob: Job? = null
++    private var generation = 0L
++    private var profileSessionVersion = library.sessionVersion.value
+ 
+-    fun load() {
+-        if (_state.value.loading || _state.value.profile != null) return
++    init {
++        viewModelScope.launch {
++            library.changes.collect {
++                if (_state.value.profile != null) refresh()
++            }
++        }
+         viewModelScope.launch {
+-            _state.value = _state.value.copy(loading = true, error = null)
+-            runCatching { api.viewerProfile() }
+-                .onSuccess { _state.value = ProfileUiState(profile = it) }
+-                .onFailure { _state.value = ProfileUiState(error = "Couldn't load your AniList profile. Try again.") }
++            library.sessionVersion.drop(1).collect(::resetForSession)
+         }
+     }
+ 
+-    fun refresh() {
+-        viewModelScope.launch {
+-            _state.value = _state.value.copy(refreshing = true, error = null)
+-            runCatching { api.viewerProfile() }
+-                .onSuccess { _state.value = ProfileUiState(profile = it) }
+-                .onFailure { _state.value = _state.value.copy(refreshing = false, error = "Couldn't refresh your AniList profile.") }
++    fun load() {
++        resetForSession(library.sessionVersion.value)
++        if (_state.value.loading || _state.value.profile != null) return
++        loadProfile(isRefresh = false)
++    }
++
++    fun refresh() = loadProfile(isRefresh = true)
++
++    private fun loadProfile(isRefresh: Boolean) {
++        val requestGeneration = ++generation
++        loadJob?.cancel()
++        _state.value = _state.value.copy(
++            loading = !isRefresh && _state.value.profile == null,
++            refreshing = isRefresh,
++            error = null,
++        )
++        loadJob = viewModelScope.launch {
++            try {
++                val profile = api.viewerProfile()
++                if (requestGeneration == generation) {
++                    _state.value = ProfileUiState(profile = profile)
++                }
++            } catch (cancelled: CancellationException) {
++                throw cancelled
++            } catch (_: Throwable) {
++                if (requestGeneration == generation) {
++                    _state.value = _state.value.copy(
++                        loading = false,
++                        refreshing = false,
++                        error = if (isRefresh) {
++                            "Couldn't refresh your AniList profile."
++                        } else {
++                            "Couldn't load your AniList profile. Try again."
++                        },
++                    )
++                }
++            }
+         }
+     }
++
++    private fun resetForSession(version: Long) {
++        if (profileSessionVersion == version) return
++        profileSessionVersion = version
++        generation++
++        loadJob?.cancel()
++        _state.value = ProfileUiState()
++    }
+ }
+ 
+ data class AniListProfile(
+diff --git a/app/src/test/java/app/hikari/data/AniListLibraryRepositoryTest.kt b/app/src/test/java/app/hikari/data/AniListLibraryRepositoryTest.kt
+new file mode 100644
+index 0000000000000000000000000000000000000000..76dff0e2323feb8f629121d8ee3e0c0003988a99
+--- /dev/null
++++ b/app/src/test/java/app/hikari/data/AniListLibraryRepositoryTest.kt
+@@ -0,0 +1,153 @@
++package app.hikari.data
++
++import app.hikari.core.model.LibraryEntry
++import app.hikari.core.model.MediaSummary
++import app.hikari.core.model.MediaType
++import app.hikari.core.model.ScoreFormat
++import app.hikari.data.remote.AniListLibraryRemote
++import app.hikari.data.remote.LibrarySnapshot
++import kotlinx.coroutines.async
++import kotlinx.coroutines.CoroutineStart
++import kotlinx.coroutines.CompletableDeferred
++import kotlinx.coroutines.flow.first
++import kotlinx.coroutines.runBlocking
++import kotlinx.coroutines.yield
++import org.junit.Assert.assertEquals
++import org.junit.Assert.assertNull
++import org.junit.Test
++
++class AniListLibraryRepositoryTest {
++    @Test
++    fun `anime and manga snapshots remain separated`() = runBlocking {
++        val remote = FakeLibraryRemote()
++        val repository = AniListLibraryRepository(remote)
++
++        repository.refresh(MediaType.ANIME)
++        repository.refresh(MediaType.MANGA)
++
++        assertEquals(listOf(ANIME_ENTRY), repository.state.value[MediaType.ANIME]?.entries)
++        assertEquals(listOf(MANGA_ENTRY), repository.state.value[MediaType.MANGA]?.entries)
++    }
++
++    @Test
++    fun `mutation response is published even when full refresh fails`() = runBlocking {
++        val remote = FakeLibraryRemote()
++        val repository = AniListLibraryRepository(remote)
++        repository.refresh(MediaType.ANIME)
++        remote.failNextAnimeRefresh = true
++        val change = async(start = CoroutineStart.UNDISPATCHED) { repository.changes.first() }
++
++        repository.updateEntry(MediaType.ANIME, ANIME_ENTRY, "COMPLETED", 12, 90.0)
++
++        val saved = repository.state.value.getValue(MediaType.ANIME).entries.single()
++        assertEquals("COMPLETED", saved.status)
++        assertEquals(12, saved.progress)
++        assertEquals(90.0, saved.score ?: 0.0, 0.0)
++        assertEquals(MediaType.ANIME, change.await())
++    }
++
++    @Test
++    fun `same-type operations are serialized while different types remain independent`() = runBlocking {
++        val remote = FakeLibraryRemote()
++        val repository = AniListLibraryRepository(remote)
++
++        val animeOne = async { repository.refresh(MediaType.ANIME) }
++        val animeTwo = async { repository.refresh(MediaType.ANIME) }
++        val manga = async { repository.refresh(MediaType.MANGA) }
++        animeOne.await()
++        animeTwo.await()
++        manga.await()
++
++        assertEquals(1, remote.maxConcurrentByType.getValue(MediaType.ANIME))
++        assertEquals(1, remote.maxConcurrentByType.getValue(MediaType.MANGA))
++    }
++
++    @Test
++    fun `clear removes every account snapshot`() = runBlocking {
++        val repository = AniListLibraryRepository(FakeLibraryRemote())
++        repository.refresh(MediaType.ANIME)
++        repository.clear()
++
++        assertNull(repository.state.value[MediaType.ANIME])
++        assertNull(repository.state.value[MediaType.MANGA])
++    }
++
++    @Test
++    fun `request started before account clear cannot republish old data`() = runBlocking {
++        val started = CompletableDeferred<Unit>()
++        val release = CompletableDeferred<Unit>()
++        val remote = object : AniListLibraryRemote {
++            override suspend fun library(type: MediaType): LibrarySnapshot {
++                started.complete(Unit)
++                release.await()
++                return LibrarySnapshot(listOf(ANIME_ENTRY), ScoreFormat.POINT_100)
++            }
++
++            override suspend fun updateEntry(
++                entry: LibraryEntry,
++                status: String,
++                progress: Int,
++                score: Double,
++            ) = entry
++        }
++        val repository = AniListLibraryRepository(remote)
++        val refresh = async { repository.refresh(MediaType.ANIME) }
++        started.await()
++
++        repository.clear()
++        release.complete(Unit)
++        refresh.await()
++
++        assertNull(repository.state.value[MediaType.ANIME])
++    }
++
++    private class FakeLibraryRemote : AniListLibraryRemote {
++        var failNextAnimeRefresh = false
++        val maxConcurrentByType = MediaType.entries.associateWith { 0 }.toMutableMap()
++        private val activeByType = MediaType.entries.associateWith { 0 }.toMutableMap()
++
++        override suspend fun library(type: MediaType): LibrarySnapshot {
++            synchronized(this) {
++                activeByType[type] = activeByType.getValue(type) + 1
++                maxConcurrentByType[type] = maxOf(maxConcurrentByType.getValue(type), activeByType.getValue(type))
++            }
++            try {
++                yield()
++                if (type == MediaType.ANIME && failNextAnimeRefresh) {
++                    failNextAnimeRefresh = false
++                    error("refresh failed")
++                }
++                return LibrarySnapshot(
++                    entries = listOf(if (type == MediaType.ANIME) ANIME_ENTRY else MANGA_ENTRY),
++                    scoreFormat = ScoreFormat.POINT_100,
++                )
++            } finally {
++                synchronized(this) { activeByType[type] = activeByType.getValue(type) - 1 }
++            }
++        }
++
++        override suspend fun updateEntry(
++            entry: LibraryEntry,
++            status: String,
++            progress: Int,
++            score: Double,
++        ): LibraryEntry = entry.copy(status = status, progress = progress, score = score)
++    }
++
++    private companion object {
++        val ANIME_ENTRY = LibraryEntry(
++            id = 1,
++            media = MediaSummary(10, MediaType.ANIME, "Anime", null, null, 12),
++            status = "CURRENT",
++            progress = 3,
++            score = null,
++        )
++        val MANGA_ENTRY = LibraryEntry(
++            id = 2,
++            media = MediaSummary(20, MediaType.MANGA, "Manga", null, null, 50),
++            status = "CURRENT",
++            progress = 8,
++            score = null,
++        )
++    }
++}
+diff --git a/gradle/libs.versions.toml b/gradle/libs.versions.toml
+index 83c434e0f06f411110cc6e681c82cccb510aa197..a0edff5e2948f71e5c30865a01e8d0c2e79affbf 100644
+--- a/gradle/libs.versions.toml
++++ b/gradle/libs.versions.toml
+@@ -15,6 +15,7 @@ securityCrypto = "1.1.0-alpha06"
+ okhttp = "4.12.0"
+ browser = "1.8.0"
+ navigation = "2.9.8"
++junit = "4.13.2"
+ ksp = "2.0.21-1.0.28"
+ 
+ [libraries]
+@@ -42,6 +43,7 @@ coil-gif = { module = "io.coil-kt.coil3:coil-gif", version.ref = "coil" }
+ androidx-security-crypto = { module = "androidx.security:security-crypto", version.ref = "securityCrypto" }
+ okhttp = { module = "com.squareup.okhttp3:okhttp", version.ref = "okhttp" }
+ androidx-browser = { module = "androidx.browser:browser", version.ref = "browser" }
++junit = { module = "junit:junit", version.ref = "junit" }
+ 
+ [plugins]
+ android-application = { id = "com.android.application", version.ref = "agp" }
