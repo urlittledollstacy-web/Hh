@@ -5,8 +5,11 @@ import app.hikari.core.model.LibraryEntry
 import app.hikari.core.model.MediaSummary
 import app.hikari.core.model.MediaType
 import app.hikari.core.model.ScoreFormat
+import kotlinx.coroutines.CancellableContinuation
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -130,7 +133,7 @@ class AniListLibraryService @Inject constructor(
 
         var attempt = 0
         while (true) {
-            val response = client.newCall(request).execute()
+            val response = executeCancellable(request)
             val payload = response.body?.string().orEmpty()
             val retryAfter = response.header("Retry-After")?.toLongOrNull()?.coerceIn(1L, 60L)
             val statusCode = response.code
@@ -152,6 +155,18 @@ class AniListLibraryService @Inject constructor(
                 .getOrElse { throw IllegalStateException("AniList returned an invalid response.") }
             graphQlError(result)?.let { throw IllegalStateException(it) }
             return result
+        }
+    }
+
+    private suspend fun executeCancellable(request: Request) = suspendCancellableCoroutine { continuation: CancellableContinuation<okhttp3.Response> ->
+        val call = client.newCall(request)
+        continuation.invokeOnCancellation { call.cancel() }
+        try {
+            continuation.resumeWith(Result.success(call.execute()))
+        } catch (cancelled: CancellationException) {
+            continuation.resumeWith(Result.failure(cancelled))
+        } catch (error: Throwable) {
+            continuation.resumeWith(Result.failure(error))
         }
     }
 }
