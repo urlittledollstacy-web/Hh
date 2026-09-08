@@ -68,7 +68,7 @@ class AniListLibraryService @Inject constructor(
         return@withContext LibrarySnapshot(unique.values.toList(), scoreFormat)
     }
 
-    suspend fun updateEntry(entry: LibraryEntry, status: String, progress: Int, score: Double) = withContext(Dispatchers.IO) {
+    suspend fun updateEntry(entry: LibraryEntry, status: String, progress: Int, score: Double): LibraryEntry = withContext(Dispatchers.IO) {
         // New entries follow AniList's documented create shape: omit id, and avoid sending
         // an explicit zero score because a new entry already has no score by default.
         val hasExistingEntry = entry.id > 0
@@ -91,7 +91,15 @@ class AniListLibraryService @Inject constructor(
             put("progress", progress)
             if (includeScore) put("score", score)
         }
-        execute(mutation, variables)
+        val result = execute(mutation, variables)
+        val saved = result.getJSONObject("data").getJSONObject("SaveMediaListEntry")
+        LibraryEntry(
+            id = saved.getInt("id"),
+            media = entry.media,
+            status = saved.optString("status", status),
+            progress = saved.optInt("progress", progress),
+            score = saved.optDouble("score", 0.0).takeIf { it > 0.0 },
+        )
     }
 
     private fun parseScoreFormat(value: String): ScoreFormat = when (value) {
