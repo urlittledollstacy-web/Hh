@@ -1,10 +1,13 @@
 package app.hikari
 
+import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -54,6 +57,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -61,6 +65,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -84,6 +89,7 @@ import app.hikari.profile.ProfileDetails
 import coil3.compose.AsyncImage
 import dagger.hilt.android.AndroidEntryPoint
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -92,6 +98,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.File
 import javax.inject.Inject
 
 @AndroidEntryPoint
@@ -141,6 +149,9 @@ private enum class Destination(val label: String, val icon: ImageVector) {
 private enum class AppTheme { System, Amoled, White }
 private enum class AppPalette { Pink }
 private enum class NavigationStyle { Blur, Liquid, Off }
+
+private const val HIKARI_AVATAR_PREFS = "hikari_home_avatar"
+private const val HIKARI_AVATAR_PATH = "path"
 
 data class HomeUiState(val trending: List<MediaSummary> = emptyList(), val airing: List<MediaSummary> = emptyList(), val loading: Boolean = true, val refreshing: Boolean = false, val error: String? = null)
 
@@ -356,8 +367,38 @@ private fun AppContent(destination: Destination, theme: AppTheme, palette: AppPa
 @Composable
 private fun HomeScreen(padding: PaddingValues, onSearch: () -> Unit, onCalendar: () -> Unit, onTrending: () -> Unit, onMediaClick: (MediaSummary) -> Unit, vm: HomeViewModel = hiltViewModel()) {
     val state by vm.state.collectAsState()
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var localAvatarPath by remember { mutableStateOf(loadHomeAvatarPath(context)) }
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) {
+            scope.launch {
+                val savedPath = withContext(Dispatchers.IO) { saveHomeAvatar(context, uri, localAvatarPath) }
+                if (savedPath != null) localAvatarPath = savedPath
+            }
+        }
+    }
+    val avatarModel = localAvatarPath?.let(::File)
+
     LazyColumn(contentPadding = PaddingValues(20.dp, 26.dp, 20.dp, padding.calculateBottomPadding() + 20.dp), verticalArrangement = Arrangement.spacedBy(22.dp)) {
-        item { Row(verticalAlignment = Alignment.CenterVertically) { Column(Modifier.weight(1f)) { Text("Good evening", color = MaterialTheme.colorScheme.onSurfaceVariant); Text("Find your next favorite.", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold) }; Box(Modifier.size(44.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primary), contentAlignment = Alignment.Center) { Text("H", color = MaterialTheme.colorScheme.onPrimary, fontWeight = FontWeight.Bold) } } }
+        item {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Good evening", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("Find your next favorite.", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+                }
+                Box(
+                    Modifier.size(44.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primary).clickable { picker.launch("image/*") },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    if (avatarModel != null) {
+                        AsyncImage(model = avatarModel, contentDescription = "Change Hikari profile picture", modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                    } else {
+                        Text("H", color = MaterialTheme.colorScheme.onPrimary, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
         item { Row(Modifier.fillMaxWidth().height(58.dp).clip(RoundedCornerShape(18.dp)).background(MaterialTheme.colorScheme.surfaceVariant).clickable(onClick = onSearch).padding(horizontal = 15.dp), verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Outlined.Search, "Search", tint = MaterialTheme.colorScheme.onSurfaceVariant); Spacer(Modifier.width(10.dp)); Text("Search anime, manga, people...", color = MaterialTheme.colorScheme.onSurfaceVariant) } }
         if (state.error != null) item { Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)) { Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) { Text(state.error.orEmpty(), Modifier.weight(1f), color = MaterialTheme.colorScheme.onErrorContainer); TextButton(onClick = vm::refresh) { Text("Retry") } } } }
         item {
@@ -498,3 +539,25 @@ private fun MediaRow(media: List<MediaSummary>, airing: Boolean = false, onMedia
 @Composable private fun NavigationRail(selected: Destination, onSelect: (Destination) -> Unit, style: NavigationStyle) { Column(Modifier.fillMaxHeight().width(96.dp).padding(12.dp).clip(RoundedCornerShape(28.dp)).background(if (style == NavigationStyle.Off) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .8f)).padding(vertical = 16.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) { Destination.entries.forEach { NavigationItem(it, it == selected) { onSelect(it) } } } }
 @Composable private fun NavigationItem(destination: Destination, selected: Boolean, onClick: () -> Unit) { Column(Modifier.width(64.dp).height(64.dp).clip(RoundedCornerShape(18.dp)).clickable(onClick = onClick).padding(5.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) { Icon(destination.icon, destination.label, tint = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(26.dp)); Text(destination.label, fontSize = 10.sp, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal, color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant) } }
 private fun hikariColors(theme: AppTheme, systemDark: Boolean, palette: AppPalette) = if (theme == AppTheme.System && !systemDark) lightColorScheme(primary = Color(0xFFFFD1DC), onPrimary = Color(0xFF4A2731), background = Color(0xFFFAF8FF), surface = Color.White, surfaceVariant = Color(0xFFF0EDF5), onSurface = Color(0xFF1C1B20), onSurfaceVariant = Color(0xFF5F5B66)) else if (theme == AppTheme.White) lightColorScheme(primary = Color(0xFFFFD1DC), onPrimary = Color(0xFF4A2731), background = Color.White, surface = Color.White, surfaceVariant = Color(0xFFF3F1F5), onSurface = Color(0xFF1C1B20), onSurfaceVariant = Color(0xFF5F5B66)) else darkColorScheme(primary = Color(0xFFFFD1DC), onPrimary = Color(0xFF4A2731), background = Color.Black, surface = Color(0xFF0C0C0F), surfaceVariant = Color(0xFF111114), onSurface = Color(0xFFF1EDF5), onSurfaceVariant = Color(0xFFBDB8C5), outline = Color(0xFF5A5660), errorContainer = Color(0xFF4A171A), onErrorContainer = Color(0xFFFFDAD6))
+
+private fun loadHomeAvatarPath(context: Context): String? = context
+    .getSharedPreferences(HIKARI_AVATAR_PREFS, Context.MODE_PRIVATE)
+    .getString(HIKARI_AVATAR_PATH, null)
+    ?.takeIf { File(it).exists() }
+
+private suspend fun saveHomeAvatar(context: Context, uri: android.net.Uri, previousPath: String?): String? {
+    val extension = when (context.contentResolver.getType(uri)) {
+        "image/gif" -> "gif"
+        "image/png" -> "png"
+        "image/webp" -> "webp"
+        "image/jpeg" -> "jpg"
+        else -> "img"
+    }
+    val file = File(context.filesDir, "hikari_avatar_${System.currentTimeMillis()}.$extension")
+    return runCatching {
+        context.contentResolver.openInputStream(uri)?.use { input -> file.outputStream().use { output -> input.copyTo(output) } } ?: return null
+        context.getSharedPreferences(HIKARI_AVATAR_PREFS, Context.MODE_PRIVATE).edit().putString(HIKARI_AVATAR_PATH, file.absolutePath).apply()
+        previousPath?.let { File(it).delete() }
+        file.absolutePath
+    }.getOrNull()
+}
