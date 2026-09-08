@@ -30,9 +30,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -65,8 +62,8 @@ import javax.inject.Singleton
 
 internal enum class CreditType { CHARACTER, PERSON }
 internal data class CreditTarget(val id: Int, val type: CreditType)
-private data class CreditMedia(val id: Int, val type: MediaType, val title: String, val coverUrl: String?)
-private data class CreditDetail(val name: String, val imageUrl: String?, val description: String?, val subtitle: String?, val media: List<CreditMedia>)
+internal data class CreditMedia(val id: Int, val type: MediaType, val title: String, val coverUrl: String?)
+internal data class CreditDetail(val name: String, val imageUrl: String?, val description: String?, val subtitle: String?, val media: List<CreditMedia>)
 
 @Singleton
 internal class AniListCreditService @Inject constructor(private val client: OkHttpClient, private val tokenStore: SecureTokenStore) {
@@ -94,7 +91,7 @@ internal class AniListCreditService @Inject constructor(private val client: OkHt
 
 private fun JSONArray.toStringList(): List<String> = List(length()) { getString(it) }.filter { it.isNotBlank() }
 private fun cleanDescription(value: String?): String? = value?.replace(Regex("<[^>]*>"), "")?.trim()?.takeIf { it.isNotBlank() && it != "null" }
-private sealed interface CreditUiState { data object Loading : CreditUiState; data class Ready(val detail: CreditDetail) : CreditUiState; data class Error(val message: String) : CreditUiState }
+internal sealed interface CreditUiState { data object Loading : CreditUiState; data class Ready(val detail: CreditDetail) : CreditUiState; data class Error(val message: String) : CreditUiState }
 
 @HiltViewModel
 internal class CreditDetailsViewModel @Inject constructor(private val service: AniListCreditService) : ViewModel() {
