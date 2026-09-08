@@ -27,7 +27,6 @@ class AniListAuthManager @Inject constructor(
             .appendPath("authorize")
             .appendQueryParameter("client_id", clientId)
             .appendQueryParameter("response_type", "token")
-            .appendQueryParameter("redirect_uri", REDIRECT_URI)
             .appendQueryParameter("state", state)
             .build()
 
