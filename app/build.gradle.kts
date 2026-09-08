@@ -72,6 +72,7 @@ dependencies {
     implementation(libs.androidx.security.crypto)
     implementation(libs.okhttp)
     implementation(libs.androidx.browser)
+    testImplementation(libs.junit)
 }
 
 apollo {

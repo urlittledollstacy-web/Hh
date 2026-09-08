@@ -42,4 +42,16 @@ class HikariFavoritesRepository @Inject constructor(
             )
         }
     }
+
+    /** Refreshes display metadata only when this title is already a local favorite. */
+    suspend fun refreshMetadata(media: MediaSummary) {
+        dao.updateMetadata(
+            mediaId = media.id,
+            type = media.type,
+            title = media.title,
+            coverUrl = media.coverUrl,
+            averageScore = media.averageScore,
+            episodesOrChapters = media.episodesOrChapters,
+        )
+    }
 }
