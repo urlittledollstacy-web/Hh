@@ -3,6 +3,7 @@
     <application
         android:name=".HikariApplication"
         android:allowBackup="false"
+        android:enableOnBackInvokedCallback="true"
         android:label="Hikari"
         android:supportsRtl="true"
         android:theme="@style/Theme.Hikari">
