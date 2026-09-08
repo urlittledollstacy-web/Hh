@@ -27,6 +27,7 @@ class AniListAuthManager @Inject constructor(
             .appendPath("authorize")
             .appendQueryParameter("client_id", clientId)
             .appendQueryParameter("response_type", "token")
+            .appendQueryParameter("redirect_uri", REDIRECT_URI)
             .appendQueryParameter("state", state)
             .build()
 
@@ -36,7 +37,7 @@ class AniListAuthManager @Inject constructor(
 
     fun handleCallback(intent: Intent): AuthCallbackResult? {
         val data = intent.data ?: return null
-        if (data.scheme != "hikari" || data.host != "oauth") return null
+        if (data.scheme != "https" || data.host != REDIRECT_HOST || data.path != REDIRECT_PATH) return null
 
         val fragment = data.fragment ?: run {
             tokenStore.clearOAuthState()
@@ -69,7 +70,9 @@ class AniListAuthManager @Inject constructor(
     fun logout() = tokenStore.clear()
 
     companion object {
-        const val REDIRECT_URI = "hikari://oauth"
+        const val REDIRECT_URI = "https://urlittledollstacy-web.github.io/oauth"
+        private const val REDIRECT_HOST = "urlittledollstacy-web.github.io"
+        private const val REDIRECT_PATH = "/oauth"
 
         private fun constantTimeEquals(first: String, second: String): Boolean {
             return MessageDigest.isEqual(first.toByteArray(Charsets.UTF_8), second.toByteArray(Charsets.UTF_8))
