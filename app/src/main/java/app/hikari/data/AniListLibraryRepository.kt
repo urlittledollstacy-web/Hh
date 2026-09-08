@@ -25,8 +25,9 @@ import kotlinx.coroutines.sync.withLock
  * Process-wide source of truth for the signed-in user's AniList tracking data.
  *
  * Anime and manga are stored and serialized independently. A successful mutation
- * is followed by a server refresh while holding the same per-type lock, so every
- * observer receives the canonical server state in one publication.
+ * is published from AniList's mutation response while holding the same per-type
+ * lock, so observers receive the server-confirmed entry immediately without a
+ * potentially stale follow-up library read overwriting it.
  */
 @Singleton
 class AniListLibraryRepository @Inject constructor(
@@ -63,19 +64,10 @@ class AniListLibraryRepository @Inject constructor(
         val generation = accountGeneration.get()
         val savedEntry = remote.updateEntry(entry, status, progress, score)
         val current = snapshots.value[type]
-        var snapshot = mergeSavedEntry(current, savedEntry)
+        val snapshot = mergeSavedEntry(current, savedEntry)
         if (publishIfCurrent(type, snapshot, generation)) {
             _changes.emit(type)
         }
-
-        snapshot = try {
-            remote.library(type)
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (_: Throwable) {
-            return@withLock snapshot
-        }
-        publishIfCurrent(type, snapshot, generation)
         snapshot
     }
 
