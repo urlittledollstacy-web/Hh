@@ -58,26 +58,26 @@ jobs:
           grep '^org.gradle.java.home=' gradle.properties
           grep '^sdk.dir=' local.properties
 
-      - name: Diagnose patch markers
-        if: hashFiles('.github/patch-debug-v4.py') != ''
-        run: |
-          python3 .github/patch-debug-v4.py
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          rm .github/patch-debug-v4.py
-          git add .github/patch-debug.txt .github/patch-debug-v4.py
-          git commit -m 'Diagnose navigation patch markers'
-          git push origin codex/create-personal-anilist-android-client
-
       - name: Apply navigation fix
         if: hashFiles('.github/apply-navigation-fix-v3.py') != ''
         run: |
-          python3 .github/apply-navigation-fix-v3.py
+          set +e
+          python3 .github/apply-navigation-fix-v3.py > /tmp/navigation-patch.log 2>&1
+          status=$?
+          if [ "$status" -ne 0 ]; then
+            cp /tmp/navigation-patch.log .github/patch-error.txt
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git add .github/patch-error.txt
+            git commit -m 'Record navigation patch error'
+            git push origin codex/create-personal-anilist-android-client
+            exit "$status"
+          fi
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          rm .github/apply-navigation-fix.py .github/apply-navigation-fix-v2.py .github/apply-navigation-fix-v3.py
+          rm .github/apply-navigation-fix.py .github/apply-navigation-fix-v2.py .github/apply-navigation-fix-v3.py .github/patch-debug-v4.py .github/patch-debug.txt
           rm .github/workflows/apply-navigation-fix.yml
-          git add app/src/main/java/app/hikari/MainActivity.kt app/src/main/java/app/hikari/media/MediaDetailsScreen.kt .github/apply-navigation-fix.py .github/apply-navigation-fix-v2.py .github/apply-navigation-fix-v3.py .github/workflows/apply-navigation-fix.yml
+          git add app/src/main/java/app/hikari/MainActivity.kt app/src/main/java/app/hikari/media/MediaDetailsScreen.kt .github/apply-navigation-fix.py .github/apply-navigation-fix-v2.py .github/apply-navigation-fix-v3.py .github/patch-debug-v4.py .github/patch-debug.txt .github/workflows/apply-navigation-fix.yml
           git commit -m 'Fix navigation stack and predictive back'
           git push origin codex/create-personal-anilist-android-client
 
