@@ -63,6 +63,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import app.hikari.core.model.MediaType
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.filterNotNull
@@ -80,6 +81,7 @@ class LibraryViewModel @Inject constructor(
     private var selectedType = MediaType.ANIME
     private var observationJob: Job? = null
     private var refreshJob: Job? = null
+    private var refreshGeneration = 0L
 
     init {
         viewModelScope.launch {
@@ -93,6 +95,7 @@ class LibraryViewModel @Inject constructor(
         selectedType = type
         observationJob?.cancel()
         refreshJob?.cancel()
+        refreshGeneration++
         _state.value = _state.value.copy(entries = emptyList(), loading = true, error = null)
 
         observationJob = viewModelScope.launch {
@@ -101,7 +104,6 @@ class LibraryViewModel @Inject constructor(
                     _state.value = _state.value.copy(
                         entries = snapshot.entries,
                         scoreFormat = snapshot.scoreFormat,
-                        loading = false,
                         error = null,
                     )
                 }
@@ -113,14 +115,18 @@ class LibraryViewModel @Inject constructor(
     fun refresh(type: MediaType = selectedType) {
         if (type != selectedType) return
         refreshJob?.cancel()
+        val requestGeneration = ++refreshGeneration
         _state.value = _state.value.copy(loading = true, error = null)
         refreshJob = viewModelScope.launch {
             try {
                 library.refresh(type)
+                if (selectedType == type && refreshGeneration == requestGeneration) {
+                    _state.value = _state.value.copy(loading = false, error = null)
+                }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Throwable) {
-                if (selectedType == type) {
+                if (selectedType == type && refreshGeneration == requestGeneration) {
                     _state.value = _state.value.copy(
                         loading = false,
                         error = error.message ?: "Couldn't load your library.",
