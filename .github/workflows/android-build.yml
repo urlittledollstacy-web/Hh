@@ -18,7 +18,7 @@ jobs:
       - name: Check out branch
         uses: actions/checkout@v4
         with:
-          ref: codex/create-personal-anilist-android-client
+          ref: ${{ github.ref }}
           fetch-depth: 0
 
       - name: Set up JDK 17
