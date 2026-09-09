@@ -120,7 +120,7 @@ def run(*args):
 run('git', 'config', 'user.name', 'github-actions[bot]')
 run('git', 'config', 'user.email', '41898282+github-actions[bot]@users.noreply.github.com')
 run('git', 'add', 'app/src/main/java/app/hikari/MainActivity.kt', 'app/src/main/java/app/hikari/data/remote/AniListGraphQlService.kt')
-run('git', 'rm', '-f', '.github/workflows/fix-search-build.yml', '.github/workflows/apply-home-recommendations.yml', '.github/apply_home_recommendations.py')
+run('git', 'rm', '-f', '--ignore-unmatch', '.github/workflows/fix-search-build.yml', '.github/workflows/apply-home-recommendations.yml', '.github/apply_home_recommendations.py')
 run('git', 'commit', '-m', 'Add personalized Home recommendations [skip ci]')
 run('git', 'fetch', 'origin', 'codex/create-personal-anilist-android-client')
 run('git', 'rebase', 'origin/codex/create-personal-anilist-android-client')
