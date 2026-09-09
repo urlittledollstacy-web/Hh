@@ -25,6 +25,7 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
     kotlinOptions { jvmTarget = "17" }
+    testOptions { unitTests.isIncludeAndroidResources = true }
     val anilistClientId = providers.gradleProperty("ANILIST_CLIENT_ID").orElse("")
     defaultConfig { buildConfigField("String", "ANILIST_CLIENT_ID", "\"${anilistClientId.get()}\"") }
 
@@ -73,6 +74,10 @@ dependencies {
     implementation(libs.okhttp)
     implementation(libs.androidx.browser)
     testImplementation(libs.junit)
+    testImplementation(platform(libs.androidx.compose.bom))
+    testImplementation(libs.androidx.compose.ui.test.junit4)
+    testImplementation(libs.robolectric)
+    testRuntimeOnly(libs.androidx.compose.ui.test.manifest)
 }
 
 apollo {
