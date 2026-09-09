@@ -101,6 +101,11 @@ class MediaDetailsViewModel @Inject constructor(
     private var currentFavorite = false
 
     fun load(summary: MediaSummary) {
+        val current = _state.value
+        if (current is MediaDetailState.Ready && current.media.summary.id == summary.id && current.media.summary.type == summary.type) {
+            return
+        }
+
         val generation = ++requestGeneration
         loadJob?.cancel()
         favoriteJob?.cancel()
