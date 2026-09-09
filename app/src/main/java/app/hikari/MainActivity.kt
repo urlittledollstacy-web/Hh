@@ -13,10 +13,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -325,14 +322,10 @@ class SearchViewModel @Inject constructor(private val api: AniListGraphQlService
     var palette by remember { mutableStateOf(AppPalette.Pink) }
     var navStyle by remember { mutableStateOf(NavigationStyle.Blur) }
     val navController = rememberNavController()
-    val mediaEntries = remember { mutableStateMapOf<String, MediaSummary>() }
-    var nextMediaToken by remember { mutableIntStateOf(0) }
     val colors = hikariColors(theme, isSystemInDarkTheme(), palette)
 
     fun navigateToMedia(summary: MediaSummary) {
-        val token = "m${++nextMediaToken}"
-        mediaEntries[token] = summary
-        navController.navigate("media/$token")
+        navController.navigate("media/${summary.id}/${summary.type.name}")
     }
 
     MaterialTheme(colorScheme = colors) {
@@ -379,19 +372,21 @@ class SearchViewModel @Inject constructor(private val api: AniListGraphQlService
                     }
 
                     composable(
-                        route = "media/{token}",
-                        arguments = listOf(navArgument("token") { type = NavType.StringType })
+                        route = "media/{id}/{type}",
+                        arguments = listOf(
+                            navArgument("id") { type = NavType.IntType },
+                            navArgument("type") { type = NavType.StringType },
+                        )
                     ) { entry ->
-                        val token = entry.arguments?.getString("token")
-                        val summary = token?.let(mediaEntries::get)
-                        if (summary == null) {
-                            LaunchedEffect(token) { navController.popBackStack() }
+                        val id = entry.arguments?.getInt("id")
+                        val type = entry.arguments?.getString("type")?.let { value ->
+                            runCatching { MediaType.valueOf(value) }.getOrNull()
+                        }
+                        if (id == null || type == null) {
+                            LaunchedEffect(id, type) { navController.popBackStack() }
                         } else {
-                            DisposableEffect(token) {
-                                onDispose { mediaEntries.remove(token) }
-                            }
                             MediaDetailsScreen(
-                                summary = summary,
+                                summary = MediaSummary(id, type, "", null, null, null),
                                 onBack = { navController.popBackStack() }
                             )
                         }
