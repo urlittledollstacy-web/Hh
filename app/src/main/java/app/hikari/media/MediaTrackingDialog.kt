@@ -70,7 +70,7 @@ fun MediaTrackingDialog(
                 }
                 Text(if (type == MediaType.ANIME) "Anime tracking" else "Manga tracking", color = MaterialTheme.colorScheme.primary)
                 Text("Status", fontWeight = FontWeight.SemiBold)
-                ChoiceRow(selectedStatus) { selectedStatus = it }
+                ChoiceRow(selectedStatus, type) { selectedStatus = it }
                 Text(if (type == MediaType.ANIME) "Episodes watched" else "Chapters read", fontWeight = FontWeight.SemiBold)
                 if (maxProgress > 0) {
                     Slider(value = safeProgress, onValueChange = { progress = it.roundToInt().toFloat() }, valueRange = 0f..maxProgress.toFloat(), steps = (maxProgress - 1).coerceAtLeast(0))
@@ -99,22 +99,22 @@ fun MediaTrackingDialog(
 }
 
 @Composable
-private fun ChoiceRow(selected: String, onSelect: (String) -> Unit) {
+private fun ChoiceRow(selected: String, type: MediaType, onSelect: (String) -> Unit) {
     val options = listOf("CURRENT", "PLANNING", "COMPLETED", "REPEATING", "PAUSED", "DROPPED")
     LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         items(options) { option ->
             val active = option == selected
             Box(Modifier.clip(RoundedCornerShape(18.dp)).background(if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant).clickable { onSelect(option) }.padding(horizontal = 14.dp, vertical = 9.dp)) {
-                Text(optionLabel(option), color = if (active) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface, fontSize = 12.sp)
+                Text(optionLabel(option, type), color = if (active) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface, fontSize = 12.sp)
             }
         }
     }
 }
 
-private fun optionLabel(value: String): String = when (value) {
-    "CURRENT" -> "Watching"
+private fun optionLabel(value: String, type: MediaType): String = when (value) {
+    "CURRENT" -> if (type == MediaType.MANGA) "Reading" else "Watching"
     "PLANNING" -> "Planning"
-    "REPEATING" -> "Rewatching"
+    "REPEATING" -> if (type == MediaType.MANGA) "Rereading" else "Rewatching"
     "COMPLETED" -> "Completed"
     "PAUSED" -> "Paused"
     "DROPPED" -> "Dropped"
