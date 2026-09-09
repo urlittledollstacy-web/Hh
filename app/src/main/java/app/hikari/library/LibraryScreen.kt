@@ -212,7 +212,7 @@ fun LibraryScreen(
             }
         }
         item { ChoiceRow(listOf("ANIME", "MANGA"), type.name) { type = MediaType.valueOf(it); status = "ALL"; selected = null } }
-        item { ChoiceRow(statuses, status) { status = it } }
+        item { ChoiceRow(statuses, status, type) { status = it } }
         if (status == "FAVORITES") {
             item {
                 Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
@@ -319,7 +319,7 @@ private fun LibraryEditorDialog(entry: LibraryEntry, type: MediaType, scoreForma
                 entry.media.coverUrl?.let { AsyncImage(model = it, contentDescription = entry.media.title, modifier = Modifier.fillMaxWidth().aspectRatio(1.7f).clip(RoundedCornerShape(14.dp)), contentScale = ContentScale.Fit) }
                 Text(if (type == MediaType.ANIME) "Anime tracking" else "Manga tracking", color = MaterialTheme.colorScheme.primary)
                 Text("Status", fontWeight = FontWeight.SemiBold)
-                ChoiceRow(statusOptions(type), selectedStatus) { selectedStatus = it }
+                ChoiceRow(statusOptions(type), selectedStatus, type) { selectedStatus = it }
                 Text(progressLabel(type), fontWeight = FontWeight.SemiBold)
                 if (maxProgress > 0) Slider(value = safeProgress, onValueChange = { progress = it.roundToInt().toFloat() }, valueRange = 0f..maxProgress.toFloat(), steps = (maxProgress - 1).coerceAtLeast(0))
                 else Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center, modifier = Modifier.fillMaxWidth()) {
@@ -357,20 +357,20 @@ private fun scoreDisplay(score: Double, format: ScoreFormat): String = when (for
 }
 
 @Composable
-private fun ChoiceRow(options: List<String>, selected: String, onSelect: (String) -> Unit) {
+private fun ChoiceRow(options: List<String>, selected: String, type: MediaType = MediaType.ANIME, onSelect: (String) -> Unit) {
     LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         items(options) { option ->
             val active = option == selected
             Box(Modifier.clip(RoundedCornerShape(18.dp)).background(if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant).clickable { onSelect(option) }.padding(horizontal = 14.dp, vertical = 9.dp)) {
-                Text(optionLabel(option), color = if (active) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface, fontSize = 12.sp)
+                Text(optionLabel(option, type), color = if (active) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface, fontSize = 12.sp)
             }
         }
     }
 }
 
 private fun statusOptions(type: MediaType): List<String> = listOf("CURRENT", "PLANNING", "COMPLETED", "REPEATING", "PAUSED", "DROPPED")
-private fun optionLabel(value: String): String = when (value) {
-    "ALL" -> "All"; "CURRENT" -> "Watching"; "PLANNING" -> "Planning"; "REPEATING" -> "Rewatching"; "REREADING" -> "Rereading"; "COMPLETED" -> "Completed"; "PAUSED" -> "Paused"; "DROPPED" -> "Dropped"; "FAVORITES" -> "♥ Favorites"; else -> value.lowercase().replace('_', ' ').replaceFirstChar { it.uppercase() }
+private fun optionLabel(value: String, type: MediaType = MediaType.ANIME): String = when (value) {
+    "ALL" -> "All"; "CURRENT" -> if (type == MediaType.MANGA) "Reading" else "Watching"; "PLANNING" -> if (type == MediaType.MANGA) "Plan to read" else "Planning"; "REPEATING" -> if (type == MediaType.MANGA) "Rereading" else "Rewatching"; "REREADING" -> "Rereading"; "COMPLETED" -> "Completed"; "PAUSED" -> "Paused"; "DROPPED" -> "Dropped"; "FAVORITES" -> "♥ Favorites"; else -> value.lowercase().replace('_', ' ').replaceFirstChar { it.uppercase() }
 }
 private fun statusLabel(value: String, type: MediaType): String = when (type) { MediaType.ANIME -> optionLabel(value); MediaType.MANGA -> when (value) { "CURRENT" -> "Reading"; "PLANNING" -> "Plan to read"; "REPEATING" -> "Rereading"; else -> optionLabel(value) } }
 private fun progressLabel(entry: LibraryEntry, type: MediaType): String = when (type) { MediaType.ANIME -> "${entry.progress} episodes${entry.media.episodesOrChapters?.let { " / $it" } ?: ""}"; MediaType.MANGA -> "${entry.progress} chapters${entry.media.episodesOrChapters?.let { " / $it" } ?: ""}" }
