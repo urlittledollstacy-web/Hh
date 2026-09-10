@@ -8,6 +8,7 @@ lifecycle = "2.8.7"
 apollo = "4.1.1"
 hilt = "2.52"
 hiltNavigation = "1.2.0"
+haze = "1.6.10"
 room = "2.6.1"
 work = "2.10.0"
 coil = "3.0.4"
@@ -37,6 +38,7 @@ apollo-runtime = { module = "com.apollographql.apollo:apollo-runtime", version.r
 hilt-android = { module = "com.google.dagger:hilt-android", version.ref = "hilt" }
 hilt-compiler = { module = "com.google.dagger:hilt-compiler", version.ref = "hilt" }
 androidx-hilt-navigation-compose = { module = "androidx.hilt:hilt-navigation-compose", version.ref = "hiltNavigation" }
+haze-android = { module = "dev.chrisbanes.haze:haze-android", version.ref = "haze" }
 androidx-room-runtime = { module = "androidx.room:room-runtime", version.ref = "room" }
 androidx-room-ktx = { module = "androidx.room:room-ktx", version.ref = "room" }
 androidx-room-compiler = { module = "androidx.room:room-compiler", version.ref = "room" }
