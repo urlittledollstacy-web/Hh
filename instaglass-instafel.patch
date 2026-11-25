@@ -1,0 +1,141 @@
+diff --git a/app/src/main/AndroidManifest.xml b/app/src/main/AndroidManifest.xml
+index daec147..e9ecfca 100644
+--- a/app/src/main/AndroidManifest.xml
++++ b/app/src/main/AndroidManifest.xml
+@@ -3,7 +3,7 @@
+ 
+     <!-- Leer la versión de Instagram y abrirlo desde la tarjeta de estado. -->
+     <queries>
+-        <package android:name="com.instagram.android" />
++        <package android:name="com.instafel.android" />
+     </queries>
+ 
+     <application
+diff --git a/app/src/main/java/com/maciasdxv/igglass/GlassParams.kt b/app/src/main/java/com/maciasdxv/igglass/GlassParams.kt
+index c085560..cf9829f 100644
+--- a/app/src/main/java/com/maciasdxv/igglass/GlassParams.kt
++++ b/app/src/main/java/com/maciasdxv/igglass/GlassParams.kt
+@@ -113,6 +113,13 @@ internal object GlassParams {
+     /** Separación entre la cápsula y los lados de la pantalla (iOS: ~21dp). */
+     @JvmField var CAPSULE_MARGIN_H_DP = 21f
+ 
++    /**
++     * Espacio extra entre la cápsula y el borde inferior. Instagram reserva
++     * aquí la franja de navegación, que es 0 con navegación por gestos: la
++     * cápsula queda pegada al borde. Este ajuste la sube.
++     */
++    @JvmField var BAR_BOTTOM_OFFSET_DP = 0f
++
+     /** Separación entre los bordes de la cápsula y la primera/última pestaña. */
+     @JvmField var CAPSULE_PADDING_H_DP = 0f
+ 
+diff --git a/app/src/main/java/com/maciasdxv/igglass/HookEntry.kt b/app/src/main/java/com/maciasdxv/igglass/HookEntry.kt
+index e1c5963..bf321f7 100644
+--- a/app/src/main/java/com/maciasdxv/igglass/HookEntry.kt
++++ b/app/src/main/java/com/maciasdxv/igglass/HookEntry.kt
+@@ -152,7 +152,7 @@ class HookEntry : IXposedHookLoadPackage {
+     }
+ 
+     private companion object {
+-        const val IG_PACKAGE = "com.instagram.android"
++        const val IG_PACKAGE = "com.instafel.android"
+         const val DUMP_DELAY_MS = 2000L
+     }
+ }
+diff --git a/app/src/main/java/com/maciasdxv/igglass/Settings.kt b/app/src/main/java/com/maciasdxv/igglass/Settings.kt
+index 9ba4dda..70bf03d 100644
+--- a/app/src/main/java/com/maciasdxv/igglass/Settings.kt
++++ b/app/src/main/java/com/maciasdxv/igglass/Settings.kt
+@@ -85,6 +85,9 @@ internal object Settings {
+             field = P::CAPSULE_HEIGHT_DP, min = 40f, max = 72f, unit = "dp"),
+         Number("capsule_margin", "Side margin", Section.CAPSULE,
+             field = P::CAPSULE_MARGIN_H_DP, min = 0f, max = 48f, unit = "dp"),
++        Number("capsule_bottom_offset", "Bottom offset", Section.CAPSULE,
++            "Lift the capsule off the bottom edge. Needed with gesture navigation.",
++            field = P::BAR_BOTTOM_OFFSET_DP, min = 0f, max = 48f, unit = "dp"),
+         Number("capsule_blur", "Blur", Section.CAPSULE,
+             field = P::CAPSULE_BLUR_DP, min = 0f, max = 24f, unit = "dp"),
+         Number("capsule_saturation", "Saturation", Section.CAPSULE,
+diff --git a/app/src/main/java/com/maciasdxv/igglass/TabBarGlass.kt b/app/src/main/java/com/maciasdxv/igglass/TabBarGlass.kt
+index 0686d93..246cbf1 100644
+--- a/app/src/main/java/com/maciasdxv/igglass/TabBarGlass.kt
++++ b/app/src/main/java/com/maciasdxv/igglass/TabBarGlass.kt
+@@ -31,7 +31,7 @@ import kotlin.math.roundToInt
+  */
+ internal object TabBarGlass {
+ 
+-    private const val IG_PACKAGE = "com.instagram.android"
++    private const val IG_PACKAGE = "com.instafel.android"
+     private val TAB_NAMES = listOf("feed_tab", "clips_tab", "direct_tab", "search_tab", "profile_tab")
+ 
+     /** Reintentos mientras Instagram aún no ha inflado o medido la barra. */
+@@ -589,7 +589,8 @@ internal object TabBarGlass {
+         private val capsuleHeight = (GlassParams.CAPSULE_HEIGHT_DP * density).toInt()
+ 
+         private fun coordinatorMargin() = if (nativeLayout()) navInset else 0
+-        private fun barMargin() = if (nativeLayout()) 0 else navInset
++        private fun bottomOffset() = (GlassParams.BAR_BOTTOM_OFFSET_DP * density).toInt()
++        private fun barMargin() = if (nativeLayout()) 0 else navInset + bottomOffset()
+ 
+         /** En modo nativo el contenido acaba [GlassParams.NATIVE_OVERLAP_DP] por debajo del borde de la cápsula. */
+         private fun siblingMargin() =
+diff --git a/app/src/main/java/com/maciasdxv/igglass/ViewDumper.kt b/app/src/main/java/com/maciasdxv/igglass/ViewDumper.kt
+index 586c22d..667af6a 100644
+--- a/app/src/main/java/com/maciasdxv/igglass/ViewDumper.kt
++++ b/app/src/main/java/com/maciasdxv/igglass/ViewDumper.kt
+@@ -153,7 +153,7 @@ internal object ViewDumper {
+     }
+ 
+     /**
+-     * Escribe en /sdcard/Android/data/com.instagram.android/files/igglass/,
++     * Escribe en /sdcard/Android/data/com.instafel.android/files/igglass/,
+      * que se puede bajar con `adb pull` sin root.
+      */
+     private fun writeFile(activity: Activity, name: String, lines: List<String>): String? = try {
+diff --git a/app/src/main/java/com/maciasdxv/igglass/app/MainActivity.kt b/app/src/main/java/com/maciasdxv/igglass/app/MainActivity.kt
+index b05e7e6..ea64fe5 100644
+--- a/app/src/main/java/com/maciasdxv/igglass/app/MainActivity.kt
++++ b/app/src/main/java/com/maciasdxv/igglass/app/MainActivity.kt
+@@ -437,7 +437,7 @@ private fun Preview(demoCompact: Boolean, light: Boolean, modifier: Modifier = M
+ /** Abre un perfil en la app de Instagram (o en el navegador si no está). */
+ private fun openInstagramProfile(context: Context, username: String) {
+     val uri = Uri.parse("https://www.instagram.com/_u/$username")
+-    val app = Intent(Intent.ACTION_VIEW, uri).setPackage("com.instagram.android")
++    val app = Intent(Intent.ACTION_VIEW, uri).setPackage("com.instafel.android")
+     runCatching { context.startActivity(app) }
+         .onFailure { runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, uri)) } }
+ }
+@@ -500,7 +500,7 @@ private fun format(value: Float, unit: String): String = when (unit) {
+ private fun restartInstagram(context: Context) {
+     thread {
+         val ok = try {
+-            Runtime.getRuntime().exec(arrayOf("su", "-c", "am force-stop com.instagram.android")).waitFor() == 0
++            Runtime.getRuntime().exec(arrayOf("su", "-c", "am force-stop com.instafel.android")).waitFor() == 0
+         } catch (t: Throwable) {
+             false
+         }
+diff --git a/app/src/main/java/com/maciasdxv/igglass/app/StatusCard.kt b/app/src/main/java/com/maciasdxv/igglass/app/StatusCard.kt
+index 0ec3d26..5da837f 100644
+--- a/app/src/main/java/com/maciasdxv/igglass/app/StatusCard.kt
++++ b/app/src/main/java/com/maciasdxv/igglass/app/StatusCard.kt
+@@ -35,7 +35,7 @@ import com.maciasdxv.igglass.BuildConfig
+ import androidx.compose.material3.Text as M3Text
+ import top.yukonga.miuix.kmp.basic.Text as MiuixText
+ 
+-private const val IG_PACKAGE = "com.instagram.android"
++private const val IG_PACKAGE = "com.instafel.android"
+ 
+ /**
+  * La tarjeta de estado. Activa: la de "Working" del gestor de KernelSU en
+diff --git a/app/src/main/res/values/arrays.xml b/app/src/main/res/values/arrays.xml
+index 1dbe3cb..f5f4dc9 100644
+--- a/app/src/main/res/values/arrays.xml
++++ b/app/src/main/res/values/arrays.xml
+@@ -1,6 +1,6 @@
+ <?xml version="1.0" encoding="utf-8"?>
+ <resources>
+     <string-array name="xposed_scope">
+-        <item>com.instagram.android</item>
++        <item>com.instafel.android</item>
+     </string-array>
+ </resources>
